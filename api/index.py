@@ -171,7 +171,7 @@ def catch_all(path):
                         f"👤 <b>নাম:</b> {d.get('name_bn', '')} ({d.get('name_en', '')})\n"
                         f"⚧ <b>লিঙ্গ:</b> {d.get('sex', '')}\n"
                         f"📅 <b>জন্ম তারিখ:</b> {d.get('date_of_birth', '')}\n"
-                        f"🆔 <b>ইউবিআরএন:</b> <code>{d.get('birth_registration_number', '')}</code>\n"
+                        f"🆔 <b>Birth Num:</b> <code>{d.get('birth_registration_number', '')}</code>\n"
                         f"👨‍👩‍👧 <b>পিতা:</b> {d.get('father_name_bn', '')}\n"
                         f"👩‍👧 <b>মাতা:</b> {d.get('mother_name_bn', '')}\n"
                         f"📍 <b>জন্মস্থান:</b> {d.get('birth_place_bn', '')}\n"
