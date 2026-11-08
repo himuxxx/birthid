@@ -14,7 +14,7 @@ TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4
 VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
 DEVELOPER = "@shakib2016"
 
-# You can add more keys here later separated by comma if this one fails
+# Vercel Environment Variable theke key nibe, na thakle default fallback
 OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8824022881352388957').split(',')
 
 _UNICODE_MATH = str.maketrans({
@@ -42,13 +42,12 @@ def eval_math(raw_ocr: str) -> str:
     return nums[-1] if nums else ''
 
 def solve_captcha(img_bytes):
-    if not img_bytes: return '', 'No image'
+    if not img_bytes: return '', 'No image bytes'
     try:
         img = Image.open(io.BytesIO(img_bytes)).convert('L')
     except Exception as e:
-        return '', f'ImgErr: {e}'
+        return '', f'Image open failed: {e}'
     
-    # Fast processing, 2 variants
     variants = []
     up = img.resize((img.width * 3, img.height * 3), Image.Resampling.LANCZOS)
     
@@ -66,22 +65,28 @@ def solve_captcha(img_bytes):
             if not key: continue
             form = {'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 'OCREngine': '2', 'scale': 'true'}
             try:
-                r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=4)
-                if r.status_code == 200:
-                    results = r.json().get('ParsedResults') or []
-                    if results:
-                        text = results[0].get('ParsedText', '')
-                        ans = eval_math(text)
-                        if ans: return ans, f'Success text:{text}'
-                        else: debug_msgs.append(f'{text}')
-                    else:
-                        debug_msgs.append('empty')
-                else:
-                    debug_msgs.append(f'HTTP {r.status_code}')
-            except Exception as e:
-                debug_msgs.append(f'Err')
+                r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=5)
+                data = r.json()
                 
-    return '', f'OCR Failed: {", ".join(debug_msgs)}'
+                # Check if API threw an error (Rate limit / Invalid key)
+                if data.get('IsErroredOnProcessing'):
+                    err_msg = data.get('ErrorMessage')
+                    if isinstance(err_msg, list): err_msg = err_msg[0]
+                    debug_msgs.append(f"API Err: {err_msg}")
+                    continue
+                
+                results = data.get('ParsedResults') or []
+                if results:
+                    text = results[0].get('ParsedText', '').strip()
+                    ans = eval_math(text)
+                    if ans: return ans, f'Success: {text}'
+                    else: debug_msgs.append(f"OCR read '{text}' but no math")
+                else:
+                    debug_msgs.append('OCR returned empty text')
+            except Exception as e:
+                debug_msgs.append(f'ReqErr: {e}')
+                
+    return '', f'Failed: {" | ".join(debug_msgs)}'
 
 def fetch_bdris(record_type, number, dob):
     base_url = 'https://everify.bdris.gov.bd/'
@@ -102,7 +107,6 @@ def fetch_bdris(record_type, number, dob):
         img_data = session.get(img_url, timeout=5).content
         solved, debug_info = solve_captcha(img_data)
         
-        # If captcha fails, return exact reason instead of timing out
         if not solved: 
             return {'success': False, 'error': f'Captcha issue: {debug_info}'}
         
@@ -116,7 +120,7 @@ def fetch_bdris(record_type, number, dob):
             if 'no record' in res.text.lower() or 'not found' in res.text.lower(): 
                 return {'success': False, 'error': 'No record found for this UBRN and DOB.'}
             elif 'captcha' in res.text.lower():
-                return {'success': False, 'error': 'Captcha solved wrong. Please try again.'}
+                return {'success': False, 'error': f'Captcha wrong (Solved: {solved}). Try again.'}
             return {'success': False, 'error': 'Invalid response from BDRIS server.'}
             
         data = {}
