@@ -1,8 +1,12 @@
 # api/index.py
 import os
+import sys
 import re
 import requests
 from flask import Flask, request, jsonify
+
+# Fix Vercel module import
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from core import fetch_record, get_ocr_keys, add_ocr_key
 
 app = Flask(__name__)
