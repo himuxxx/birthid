@@ -11,7 +11,6 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Hardcoded Token (jate Vercel env var er jhamela na thake)
 TELEGRAM_TOKEN = '8426545218:AAFKYlHjZwUlLrgXVPyDhRr0cMreRtPWwqw'
 VERCEL_URL = 'https://birthid-puce.vercel.app'
 DEVELOPER = "@shakib2016"
@@ -82,10 +81,12 @@ def fetch_bdris(record_type, number, dob):
     search_url = f'{base_url}{"UBRN" if record_type == "birth" else "UDRN"}Verification/Search'
     start_time = time.time()
     last_debug = 'Initializing'
-    for attempt in range(3):
-        if time.time() - start_time > 8.0: break
+    
+    for attempt in range(4):
+        if time.time() - start_time > 8.5: break
         session = requests.Session()
         session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+        
         try:
             resp = session.get(base_url, timeout=3)
             soup = BeautifulSoup(resp.text, 'html.parser')
@@ -93,16 +94,21 @@ def fetch_bdris(record_type, number, dob):
             captcha_img = soup.find('img', {'id': 'CaptchaImage'})['src']
             captcha_de_text = captcha_img.split('t=')[-1]
             img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
+            
             img_headers = {'referer': base_url, 'user-agent': session.headers['user-agent']}
             img_data = session.get(img_url, headers=img_headers, timeout=3).content
+            
             solved, debug_info = solve_captcha(img_data)
             if not solved: 
                 last_debug = debug_info
                 continue
+                
             form = {'__RequestVerificationToken': token, 'UBRN': number, 'BirthDate': dob, 'CaptchaDeText': captcha_de_text, 'CaptchaInputText': solved}
             res = session.post(search_url, data=form, timeout=4)
+            
             soup = BeautifulSoup(res.text, 'html.parser')
             tables = soup.find_all('table')
+            
             if not tables:
                 if 'no record' in res.text.lower() or 'not found' in res.text.lower(): 
                     return {'success': False, 'error': 'No record found for this UBRN and DOB.'}
@@ -112,6 +118,7 @@ def fetch_bdris(record_type, number, dob):
                 else:
                     last_debug = 'Invalid response from BDRIS.'
                     continue
+                    
             data = {}
             t0_rows = tables[0].find_all('tr')
             if len(t0_rows) >= 5:
@@ -128,6 +135,7 @@ def fetch_bdris(record_type, number, dob):
                     elif 'জন্মস্থান' in lbl_bn: data.update({'birth_place_bn': val_bn, 'birth_place_en': val_en})
                     elif 'মাতার নাম' in lbl_bn: data.update({'mother_name_bn': val_bn, 'mother_name_en': val_en})
                     elif 'পিতার নাম' in lbl_bn: data.update({'father_name_bn': val_bn, 'father_name_en': val_en})
+                    
             return {'success': True, 'data': data}
         except requests.exceptions.Timeout:
             last_debug = 'Network timeout'
@@ -140,10 +148,8 @@ def fetch_bdris(record_type, number, dob):
 def tg_api(endpoint, payload):
     try:
         r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=8)
-        print(f"[TG API] {endpoint}: {r.text}", flush=True)
         return r.text
     except Exception as e:
-        print(f"[TG API ERROR] {e}", flush=True)
         return f"Error: {e}"
 
 def tg_send(chat_id, text, markup=None):
@@ -152,13 +158,23 @@ def tg_send(chat_id, text, markup=None):
     return tg_api("sendMessage", payload)
 
 def telegram_webhook_logic(data):
-    print(f"[BOT LOG] Received Update: {data}", flush=True)
-    
     if 'callback_query' in data:
         cb = data['callback_query']
-        tg_api("answerCallbackQuery", {"callback_query_id": cb['id'], "text": "Processing..."})
+        tg_api("answerCallbackQuery", {"callback_query_id": cb['id'], "text": "Opening..."})
+        
         if cb.get('data') == 'help':
-            tg_send(cb['message']['chat']['id'], f"<b>📖 How to use:</b>\n\nSend: <code>UBRN DOB</code>\nExample: <code>19901234567890123 2008-03-08</code>\n\n👨‍💻 <b>Dev:</b> {DEVELOPER}")
+            help_text = (
+                "<b>📖 How to use this bot:</b>\n\n"
+                "1. Get the 17-digit Birth Registration Number (UBRN).\n"
+                "2. Get the Date of Birth (YYYY-MM-DD format).\n"
+                "3. Send them in this chat separated by a space.\n\n"
+                "<b>Example:</b>\n"
+                "<code>19901234567890123 2008-03-08</code>\n\n"
+                "The bot will automatically solve the captcha and fetch the information for you!"
+            )
+            tg_send(cb['message']['chat']['id'], help_text)
+        elif cb.get('data') == 'dev':
+            tg_send(cb['message']['chat']['id'], f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
         return 'ok', 200
 
     if 'message' not in data: return 'ok', 200
@@ -166,11 +182,14 @@ def telegram_webhook_logic(data):
     chat_id = msg['chat']['id']
     text = msg.get('text', '').strip()
 
-    print(f"[BOT LOG] Chat ID: {chat_id} | Text: {text}", flush=True)
-
     if text.startswith('/start'):
-        markup = {"inline_keyboard": [[{"text": "🚀 Open Ultra UI", "web_app": {"url": VERCEL_URL}}], [{"text": "📖 How to use", "callback_data": "help"}]]}
-        res = tg_send(chat_id, f"<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth)</i>\n\n👨‍💻 <b>Dev:</b> {DEVELOPER}", markup)
+        markup = {
+            "inline_keyboard": [
+                [{"text": "📖 How to use", "callback_data": "help"}],
+                [{"text": "👨‍💻 Developer", "callback_data": "dev"}]
+            ]
+        }
+        tg_send(chat_id, f"<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth)</i>", markup)
         return 'ok', 200
 
     match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
@@ -189,31 +208,33 @@ def telegram_webhook_logic(data):
 
     return 'ok', 200
 
-# --- WEB & API ROUTES ---
-@app.route('/api/bot', methods=['POST'])
-@app.route('/api/index.py', methods=['POST'])
-def bot_route():
-    body = request.get_json(silent=True) or {}
-    return telegram_webhook_logic(body)
-
+# --- UNIFIED ROUTE FIX ---
+# Ei route gulo Vercel rewrite er sob kichu dhore felbe
 @app.route('/api/birth', methods=['POST'])
-def birth_route():
+@app.route('/api/index.py', methods=['POST'])
+@app.route('/api/bot', methods=['POST'])
+@app.route('/api/index', methods=['POST'])
+def unified_handler():
     body = request.get_json(silent=True) or {}
-    return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
+    
+    # Telegram Bot Update
+    if 'message' in body or 'callback_query' in body:
+        return telegram_webhook_logic(body)
+        
+    # Web UI Fetch
+    if 'num' in body and 'dob' in body:
+        return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
 
-# Magic route to fix webhook instantly
+    return jsonify({"error": "Invalid request payload"}), 400
+
 @app.route('/api/set_webhook', methods=['GET'])
 def set_webhook():
-    url = f"{VERCEL_URL}/api/bot"
-    res = tg_api("setWebhook", {"url": url, "drop_pending_updates": True})
+    res = tg_api("setWebhook", {"url": f"{VERCEL_URL}/api/bot", "drop_pending_updates": True})
     return f"<h3>Webhook Setup Result:</h3><pre>{res}</pre>"
-
-# Debug route to check bot status
-@app.route('/api/test_bot', methods=['GET'])
-def test_bot():
-    res = tg_api("getMe", {})
-    return f"<h3>Bot Status (getMe):</h3><pre>{res}</pre>"
 
 @app.route('/', methods=['GET'])
 def index():
     return jsonify({"status": "ok", "message": "Backend running."})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
