@@ -13,8 +13,6 @@ app = Flask(__name__, static_folder='../public', static_url_path='/')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY')
 VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
 DEVELOPER = "@shakib2016"
-
-# Notun OCR key add kora ache
 OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8513647421792688957,K8824022881352388957').split(',')
 
 _UNICODE_MATH = str.maketrans({
@@ -42,79 +40,46 @@ def eval_math(raw_ocr: str) -> str:
     return nums[-1] if nums else ''
 
 def _variants(img_bytes):
-    try:
-        img = Image.open(io.BytesIO(img_bytes)).convert('L')
-    except Exception:
-        return []
-    
+    try: img = Image.open(io.BytesIO(img_bytes)).convert('L')
+    except: return []
     out = []
     def emit(label, im):
-        buf = io.BytesIO()
-        im.save(buf, format='PNG')
+        buf = io.BytesIO(); im.save(buf, format='PNG')
         out.append((label, base64.b64encode(buf.getvalue()).decode('ascii')))
-
-    # 1. Upscaled Normal
     up = img.resize((img.width * 3, img.height * 3), Image.Resampling.LANCZOS)
     emit('normal', up)
-    
-    # 2. Thresholding
     th = up.point(lambda p: 255 if p > 140 else 0)
     emit('thresh', th)
-    
-    # 3. Median Filter (removes noise lines) + Threshold
-    med = up.filter(ImageFilter.MedianFilter(3))
-    med_th = med.point(lambda p: 255 if p > 140 else 0)
-    emit('med_thresh', med_th)
-    
-    # 4. Inverted Threshold
-    inv = ImageOps.invert(up)
-    inv_th = inv.point(lambda p: 255 if p > 140 else 0)
-    emit('inv_thresh', inv_th)
-
     return out
 
 def solve_captcha(img_bytes):
-    if not img_bytes: return '', 'No image bytes'
-    
+    if not img_bytes: return '', 'No image'
     variants = _variants(img_bytes)
-    if not variants: return '', 'Image open failed'
-
+    
     debug_msgs = []
     for label, b64 in variants:
-        for key in OCR_KEYS:
-            key = key.strip()
-            if not key: continue
-            form = {
-                'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 
-                'OCREngine': '2', 'scale': 'true', 'isOverlayRequired': 'false'
-            }
-            try:
-                r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=6)
-                data = r.json()
-                
-                if data.get('IsErroredOnProcessing'):
-                    err_msg = data.get('ErrorMessage')
-                    if isinstance(err_msg, list): err_msg = err_msg[0]
-                    debug_msgs.append(f"API Err: {err_msg}")
-                    continue
-                
-                results = data.get('ParsedResults') or []
-                if results:
-                    text = results[0].get('ParsedText', '').strip()
-                    ans = eval_math(text)
-                    if ans: return ans, f'Success ({label}): {text}'
-                    else: debug_msgs.append(f"{label}: '{text}'")
-                else:
-                    debug_msgs.append(f"{label}: empty")
-            except Exception as e:
-                debug_msgs.append(f'ReqErr: {e}')
-                
+        for engine in ('3', '2'): # Engine 3 (Neural) is much better for math captchas
+            for key in OCR_KEYS:
+                key = key.strip()
+                if not key: continue
+                form = {'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 'OCREngine': engine, 'scale': 'true'}
+                try:
+                    r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=5)
+                    data = r.json()
+                    if data.get('IsErroredOnProcessing'):
+                        continue
+                    results = data.get('ParsedResults') or []
+                    if results:
+                        text = results[0].get('ParsedText', '').strip()
+                        ans = eval_math(text)
+                        if ans: return ans, f'Success: {text}'
+                        else: debug_msgs.append(f"{label}-{engine}: '{text}'")
+                except: pass
     return '', f'Failed: {", ".join(debug_msgs)}'
 
 def fetch_bdris(record_type, number, dob):
     base_url = 'https://everify.bdris.gov.bd/'
     search_url = f'{base_url}{"UBRN" if record_type == "birth" else "UDRN"}Verification/Search'
-    if record_type == 'death': base_url = 'https://everify.bdris.gov.bd/UDRNVerification'
     
     session = requests.Session()
     session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
@@ -127,9 +92,11 @@ def fetch_bdris(record_type, number, dob):
         captcha_de_text = captcha_img.split('t=')[-1]
         img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
         
-        img_data = session.get(img_url, timeout=5).content
-        solved, debug_info = solve_captcha(img_data)
+        # BDRIS needs a Referer header to serve the image properly
+        img_headers = {'referer': base_url, 'user-agent': session.headers['user-agent']}
+        img_data = session.get(img_url, headers=img_headers, timeout=5).content
         
+        solved, debug_info = solve_captcha(img_data)
         if not solved: 
             return {'success': False, 'error': f'Captcha issue: {debug_info}'}
         
@@ -140,11 +107,9 @@ def fetch_bdris(record_type, number, dob):
         tables = soup.find_all('table')
         
         if not tables:
-            if 'no record' in res.text.lower() or 'not found' in res.text.lower(): 
-                return {'success': False, 'error': 'No record found for this UBRN and DOB.'}
-            elif 'captcha' in res.text.lower():
-                return {'success': False, 'error': f'Captcha wrong (Solved: {solved}). Try again.'}
-            return {'success': False, 'error': 'Invalid response from BDRIS server.'}
+            if 'no record' in res.text.lower(): return {'success': False, 'error': 'Record not found.'}
+            elif 'captcha' in res.text.lower(): return {'success': False, 'error': f'Captcha wrong (Solved: {solved}). Try again.'}
+            return {'success': False, 'error': 'Invalid response.'}
             
         data = {}
         t0_rows = tables[0].find_all('tr')
@@ -162,16 +127,12 @@ def fetch_bdris(record_type, number, dob):
                 elif 'জন্মস্থান' in lbl_bn: data.update({'birth_place_bn': val_bn, 'birth_place_en': val_en})
                 elif 'মাতার নাম' in lbl_bn: data.update({'mother_name_bn': val_bn, 'mother_name_en': val_en})
                 elif 'পিতার নাম' in lbl_bn: data.update({'father_name_bn': val_bn, 'father_name_en': val_en})
-                
         return {'success': True, 'data': data}
-    except requests.exceptions.Timeout:
-        return {'success': False, 'error': 'Server timeout. Please try again.'}
     except Exception as e:
         return {'success': False, 'error': f'Error: {str(e)}'}
 
 def tg_api(endpoint, payload):
-    if not TELEGRAM_TOKEN: return
-    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=5)
+    if TELEGRAM_TOKEN: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=5)
 
 def tg_send(chat_id, text, markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
@@ -233,6 +194,25 @@ def unified_handler():
         return jsonify(fetch_bdris(record_type, body.get('num', '').strip(), body.get('dob', '').strip()))
 
     return jsonify({"error": "Invalid request payload"}), 400
+
+# NEW ROUTE TO CHECK WHAT IMAGE BDRIS IS SENDING
+@app.route('/api/debug_captcha')
+def debug_captcha():
+    try:
+        session = requests.Session()
+        session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+        resp = session.get('https://everify.bdris.gov.bd/', timeout=5)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        captcha_img = soup.find('img', {'id': 'CaptchaImage'})['src']
+        img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
+        
+        img_headers = {'referer': 'https://everify.bdris.gov.bd/', 'user-agent': session.headers['user-agent']}
+        img_data = session.get(img_url, headers=img_headers, timeout=5).content
+        
+        b64 = base64.b64encode(img_data).decode('ascii')
+        return f'<body style="background:#222;color:#fff;text-align:center;padding:50px;"><h2>BDRIS Captcha</h2><img src="data:image/png;base64,{b64}" style="border:2px solid #fff; padding:10px; background:#fff;" /></body>'
+    except Exception as e:
+        return f'Error: {e}'
 
 @app.route('/')
 def index():
