@@ -142,7 +142,6 @@ def catch_all(path):
 
         if chat_id:
             if text.startswith('/start'):
-                # Only How to use is here, Dev Info is moved to result footer
                 welcome_text = (
                     "<b>👋 Welcome to BD Birth Number Ultra Verify!</b>\n\n"
                     "📖 <b>How to use:</b>\n"
@@ -164,9 +163,9 @@ def catch_all(path):
                 
                 if res.get('success'):
                     d = res['data']
-                    # Premium UI layout for the result
+                    # Changed "Record Found!" to Bengali and kept the premium layout
                     reply = (
-                        f"✅ <b>Record Found!</b>\n"
+                        f"✅ <b>তথ্য সফলভাবে পাওয়া গেছে!</b>\n"
                         f"━━━━━━━━━━━━━━━━━━\n"
                         f"👤 <b>নাম:</b> {d.get('name_bn', '')} ({d.get('name_en', '')})\n"
                         f"⚧ <b>লিঙ্গ:</b> {d.get('sex', '')}\n"
