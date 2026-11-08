@@ -147,97 +147,86 @@ def fetch_bdris(record_type, number, dob):
 
 def tg_api(endpoint, payload):
     try:
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=10)
-        print(f"[TG API] {endpoint}: {r.text}", flush=True)
-        return r.text
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}"
+        r = requests.post(url, json=payload, timeout=10)
+        return r.json()
     except Exception as e:
-        print(f"[TG API ERROR] {e}", flush=True)
-        return f"Error: {e}"
+        return {}
 
 def tg_send(chat_id, text, markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
     if markup: payload["reply_markup"] = markup
     return tg_api("sendMessage", payload)
 
-def telegram_webhook_logic(data):
-    print(f"[BOT LOG] Received Update: {data}", flush=True)
-    
-    # --- CALLBACK QUERY (BUTTON CLICKS) ---
-    if 'callback_query' in data:
-        cb = data['callback_query']
-        cb_id = cb.get('id')
-        msg = cb.get('message', {})
-        chat_id = msg.get('chat', {}).get('id')
-        cb_data = cb.get('data', '')
-        
-        # Answer immediately to stop loading spinner
-        tg_api("answerCallbackQuery", {"callback_query_id": cb_id})
-        
-        if chat_id:
-            if cb_data == 'help':
-                help_text = (
-                    "<b>📖 How to use this bot:</b>\n\n"
-                    "Send: <code>19901234567890123 2008-03-08</code>\n"
-                    "(17-Digit Birth number and Year-Month-Day)"
-                )
-                tg_send(chat_id, help_text)
-            elif cb_data == 'dev':
-                tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
-        return 'ok', 200
-
-    # --- MESSAGES ---
-    if 'message' not in data: return 'ok', 200
-    msg = data['message']
-    chat_id = msg.get('chat', {}).get('id')
-    text = msg.get('text', '').strip()
-
-    if text.startswith('/start'):
-        markup = {
-            "inline_keyboard": [
-                [{"text": "📖 How to use", "callback_data": "help"}],
-                [{"text": "👨‍💻 Developer", "callback_data": "dev"}]
-            ]
-        }
-        welcome_text = (
-            "<b>👋 Welcome to BDRIS Verify!</b>\n\n"
-            "Send: <code>19901234567890123 2008-03-08</code>\n"
-            "(17-Digit Birth number and Year-Month-Day)"
-        )
-        tg_send(chat_id, welcome_text, markup)
-        return 'ok', 200
-
-    match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
-    if match:
-        ubrn, dob = match.groups()
-        tg_send(chat_id, f"⏳ <b>Verifying:</b> <code>{ubrn}</code>...")
-        res = fetch_bdris('birth', ubrn, dob)
-        if res.get('success'):
-            d = res['data']
-            reply = f"✅ <b>Record Found!</b>\n👤 {d.get('name_bn', '')} ({d.get('name_en', '')})\n📅 {d.get('date_of_birth', '')}\n👨‍👩‍👧 {d.get('father_name_bn', '')}\n👩‍👧 {d.get('mother_name_bn', '')}\n📍 {d.get('birth_place_bn', '')}"
-            tg_send(chat_id, reply)
-        else:
-            tg_send(chat_id, f"❌ <b>Failed:</b> {res.get('error', 'Error')}")
-    elif text and not text.startswith('/'):
-        tg_send(chat_id, "⚠️ Invalid format. Send: <code>19901234567890123 2008-03-08</code>")
-
-    return 'ok', 200
-
 @app.route('/api/birth', methods=['POST'])
 @app.route('/api/index.py', methods=['POST'])
 @app.route('/api/bot', methods=['POST'])
 @app.route('/api/index', methods=['POST'])
 def unified_handler():
-    try:
-        # force=True ekhane boddo important, karon Vercel majhe majhe content-type drop kore dey
-        body = request.get_json(force=True, silent=True) or {}
-    except:
-        body = {}
+    # force=True ensures JSON parsing even if Vercel drops the content-type header
+    body = request.get_json(force=True, silent=True) or {}
     
-    print(f"[WEBHOOK RECEIVED] {body}", flush=True)
-    
-    if 'message' in body or 'callback_query' in body:
-        return telegram_webhook_logic(body)
+    # --- TELEGRAM BUTTONS HANDLER ---
+    if 'callback_query' in body:
+        cb = body['callback_query']
+        cb_id = cb['id']
+        chat_id = cb['message']['chat']['id']
+        cb_data = cb.get('data')
         
+        # Answer immediately to remove the loading spinner on the button
+        tg_api("answerCallbackQuery", {"callback_query_id": cb_id})
+        
+        if cb_data == 'help':
+            help_text = (
+                "<b>📖 How to use this bot:</b>\n\n"
+                "Send: <code>19901234567890123 2008-03-08</code>\n"
+                "(17-Digit Birth number and Year-Month-Day)"
+            )
+            tg_send(chat_id, help_text)
+        elif cb_data == 'dev':
+            tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
+            
+        return 'ok', 200
+
+    # --- TELEGRAM MESSAGES HANDLER ---
+    if 'message' in body:
+        msg = body['message']
+        chat_id = msg['chat']['id']
+        text = msg.get('text', '').strip()
+        
+        if text.startswith('/start'):
+            markup = {
+                "inline_keyboard": [
+                    [{"text": "📖 How to use", "callback_data": "help"}],
+                    [{"text": "👨‍💻 Developer", "callback_data": "dev"}]
+                ]
+            }
+            welcome_text = (
+                "<b>👋 Welcome to BDRIS Verify!</b>\n\n"
+                "Send: <code>19901234567890123 2008-03-08</code>\n"
+                "(17-Digit Birth number and Year-Month-Day)"
+            )
+            tg_send(chat_id, welcome_text, markup)
+            return 'ok', 200
+
+        match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
+        if match:
+            ubrn, dob = match.groups()
+            tg_send(chat_id, f"⏳ <b>Verifying:</b> <code>{ubrn}</code>...")
+            res = fetch_bdris('birth', ubrn, dob)
+            if res.get('success'):
+                d = res['data']
+                reply = f"✅ <b>Record Found!</b>\n👤 {d.get('name_bn', '')} ({d.get('name_en', '')})\n📅 {d.get('date_of_birth', '')}\n👨‍👩‍👧 {d.get('father_name_bn', '')}\n👩‍👧 {d.get('mother_name_bn', '')}\n📍 {d.get('birth_place_bn', '')}"
+                tg_send(chat_id, reply)
+            else:
+                tg_send(chat_id, f"❌ <b>Failed:</b> {res.get('error', 'Error')}")
+            return 'ok', 200
+
+        if text:
+            tg_send(chat_id, "⚠️ Invalid format. Send: <code>19901234567890123 2008-03-08</code>")
+            return 'ok', 200
+
+    # --- WEB UI FETCH HANDLER ---
     if 'num' in body and 'dob' in body:
         return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
 
