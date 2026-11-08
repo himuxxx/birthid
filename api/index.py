@@ -6,8 +6,8 @@ from flask import Flask, request, jsonify
 from core import fetch_record, get_ocr_keys, add_ocr_key
 
 app = Flask(__name__)
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '')
-VERCEL_URL = os.environ.get('VERCEL_URL', 'https://your-vercel-app.vercel.app')
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY')
+VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
 ADMIN_ID = str(os.environ.get('ADMIN_ID', '0')).strip()
 DEVELOPER = "@shakib2016"
 
