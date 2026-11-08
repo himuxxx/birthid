@@ -158,38 +158,56 @@ def tg_send(chat_id, text, markup=None):
     return tg_api("sendMessage", payload)
 
 def telegram_webhook_logic(data):
+    # --- CALLBACK QUERY HANDLER (BUTTON CLICKS) ---
     if 'callback_query' in data:
         cb = data['callback_query']
-        tg_api("answerCallbackQuery", {"callback_query_id": cb['id'], "text": "Opening..."})
+        cb_id = cb['id']
+        chat_id = cb['message']['chat']['id']
+        cb_data = cb.get('data', '')
         
-        if cb.get('data') == 'help':
+        # Answer the callback to stop the loading spinner on the button
+        tg_api("answerCallbackQuery", {"callback_query_id": cb_id})
+        
+        if cb_data == 'help':
             help_text = (
                 "<b>📖 How to use this bot:</b>\n\n"
-                "1. Get the 17-digit Birth Registration Number (UBRN).\n"
-                "2. Get the Date of Birth (YYYY-MM-DD format).\n"
-                "3. Send them in this chat separated by a space.\n\n"
+                "1️⃣ Get the 17-digit Birth Registration Number (UBRN).\n"
+                "2️⃣ Get the Date of Birth (Year-Month-Day).\n"
+                "3️⃣ Send them in this chat separated by a space.\n\n"
                 "<b>Example:</b>\n"
                 "<code>19901234567890123 2008-03-08</code>\n\n"
                 "The bot will automatically solve the captcha and fetch the information for you!"
             )
-            tg_send(cb['message']['chat']['id'], help_text)
-        elif cb.get('data') == 'dev':
-            tg_send(cb['message']['chat']['id'], f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
+            tg_send(chat_id, help_text)
+            
+        elif cb_data == 'dev':
+            tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
+            
         return 'ok', 200
 
+    # --- MESSAGE HANDLER ---
     if 'message' not in data: return 'ok', 200
     msg = data['message']
     chat_id = msg['chat']['id']
     text = msg.get('text', '').strip()
 
     if text.startswith('/start'):
+        # Beautiful UI layout
         markup = {
             "inline_keyboard": [
                 [{"text": "📖 How to use", "callback_data": "help"}],
                 [{"text": "👨‍💻 Developer", "callback_data": "dev"}]
             ]
         }
-        tg_send(chat_id, f"<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth)</i>", markup)
+        
+        # Exact format requested by user
+        welcome_text = (
+            "<b>👋 Welcome to BDRIS Verify!</b>\n\n"
+            "Send: <code>19901234567890123 2008-03-08</code>\n"
+            "<i>(17-Digit Birth number and Year-Month-Day)</i>"
+        )
+        
+        tg_send(chat_id, welcome_text, markup)
         return 'ok', 200
 
     match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
@@ -208,8 +226,6 @@ def telegram_webhook_logic(data):
 
     return 'ok', 200
 
-# --- UNIFIED ROUTE FIX ---
-# Ei route gulo Vercel rewrite er sob kichu dhore felbe
 @app.route('/api/birth', methods=['POST'])
 @app.route('/api/index.py', methods=['POST'])
 @app.route('/api/bot', methods=['POST'])
@@ -217,11 +233,9 @@ def telegram_webhook_logic(data):
 def unified_handler():
     body = request.get_json(silent=True) or {}
     
-    # Telegram Bot Update
     if 'message' in body or 'callback_query' in body:
         return telegram_webhook_logic(body)
         
-    # Web UI Fetch
     if 'num' in body and 'dob' in body:
         return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
 
