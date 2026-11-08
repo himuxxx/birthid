@@ -2,6 +2,7 @@
 import io
 import os
 import re
+import time
 import base64
 import requests
 from bs4 import BeautifulSoup
@@ -58,13 +59,13 @@ def solve_captcha(img_bytes):
     
     debug_msgs = []
     for label, b64 in variants:
-        for engine in ('3', '2'): # Engine 3 (Neural) is much better for math captchas
+        for engine in ('3', '2'):
             for key in OCR_KEYS:
                 key = key.strip()
                 if not key: continue
                 form = {'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 'OCREngine': engine, 'scale': 'true'}
                 try:
-                    r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=5)
+                    r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=4)
                     data = r.json()
                     if data.get('IsErroredOnProcessing'):
                         continue
@@ -81,55 +82,75 @@ def fetch_bdris(record_type, number, dob):
     base_url = 'https://everify.bdris.gov.bd/'
     search_url = f'{base_url}{"UBRN" if record_type == "birth" else "UDRN"}Verification/Search'
     
-    session = requests.Session()
-    session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+    start_time = time.time()
+    last_debug = 'Initializing'
     
-    try:
-        resp = session.get(base_url, timeout=5)
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        token = soup.find('input', {'name': '__RequestVerificationToken'})['value']
-        captcha_img = soup.find('img', {'id': 'CaptchaImage'})['src']
-        captcha_de_text = captcha_img.split('t=')[-1]
-        img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
-        
-        # BDRIS needs a Referer header to serve the image properly
-        img_headers = {'referer': base_url, 'user-agent': session.headers['user-agent']}
-        img_data = session.get(img_url, headers=img_headers, timeout=5).content
-        
-        solved, debug_info = solve_captcha(img_data)
-        if not solved: 
-            return {'success': False, 'error': f'Captcha issue: {debug_info}'}
-        
-        form = {'__RequestVerificationToken': token, 'UBRN': number, 'BirthDate': dob, 'CaptchaDeText': captcha_de_text, 'CaptchaInputText': solved}
-        res = session.post(search_url, data=form, timeout=6)
-        
-        soup = BeautifulSoup(res.text, 'html.parser')
-        tables = soup.find_all('table')
-        
-        if not tables:
-            if 'no record' in res.text.lower(): return {'success': False, 'error': 'Record not found.'}
-            elif 'captcha' in res.text.lower(): return {'success': False, 'error': f'Captcha wrong (Solved: {solved}). Try again.'}
-            return {'success': False, 'error': 'Invalid response.'}
+    # Retry up to 3 times, keeping within Vercel's 10s limit
+    for attempt in range(3):
+        if time.time() - start_time > 8.0:
+            break
             
-        data = {}
-        t0_rows = tables[0].find_all('tr')
-        if len(t0_rows) >= 5:
-            r2 = [c.get_text(strip=True) for c in t0_rows[2].find_all(['td', 'th'])]
-            if len(r2) >= 3: data.update({'registration_date': r2[0], 'registration_office': r2[1], 'issuance_date': r2[2]})
-            r4 = [c.get_text(strip=True) for c in t0_rows[4].find_all(['td', 'th'])]
-            if len(r4) >= 3: data.update({'date_of_birth': r4[0], 'birth_registration_number': r4[1], 'sex': r4[2]})
-        if len(tables) > 1:
-            for tr in tables[1].find_all('tr'):
-                cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th']) if td.get_text(strip=True)]
-                if len(cells) < 4: continue
-                lbl_bn, val_bn, _lbl_en, val_en = cells[0], cells[1], cells[2], cells[3]
-                if 'নাম' in lbl_bn and 'মাতার' not in lbl_bn and 'পিতার' not in lbl_bn: data.update({'name_bn': val_bn, 'name_en': val_en})
-                elif 'জন্মস্থান' in lbl_bn: data.update({'birth_place_bn': val_bn, 'birth_place_en': val_en})
-                elif 'মাতার নাম' in lbl_bn: data.update({'mother_name_bn': val_bn, 'mother_name_en': val_en})
-                elif 'পিতার নাম' in lbl_bn: data.update({'father_name_bn': val_bn, 'father_name_en': val_en})
-        return {'success': True, 'data': data}
-    except Exception as e:
-        return {'success': False, 'error': f'Error: {str(e)}'}
+        session = requests.Session()
+        session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+        
+        try:
+            resp = session.get(base_url, timeout=3)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            token = soup.find('input', {'name': '__RequestVerificationToken'})['value']
+            captcha_img = soup.find('img', {'id': 'CaptchaImage'})['src']
+            captcha_de_text = captcha_img.split('t=')[-1]
+            img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
+            
+            img_headers = {'referer': base_url, 'user-agent': session.headers['user-agent']}
+            img_data = session.get(img_url, headers=img_headers, timeout=3).content
+            
+            solved, debug_info = solve_captcha(img_data)
+            if not solved: 
+                last_debug = debug_info
+                continue
+                
+            form = {'__RequestVerificationToken': token, 'UBRN': number, 'BirthDate': dob, 'CaptchaDeText': captcha_de_text, 'CaptchaInputText': solved}
+            res = session.post(search_url, data=form, timeout=4)
+            
+            soup = BeautifulSoup(res.text, 'html.parser')
+            tables = soup.find_all('table')
+            
+            if not tables:
+                if 'no record' in res.text.lower() or 'not found' in res.text.lower(): 
+                    return {'success': False, 'error': 'No record found for this UBRN and DOB.'}
+                elif 'captcha' in res.text.lower():
+                    last_debug = f'Captcha wrong (Solved: {solved})'
+                    continue # Retry automatically
+                else:
+                    last_debug = 'Invalid response from BDRIS.'
+                    continue
+                    
+            data = {}
+            t0_rows = tables[0].find_all('tr')
+            if len(t0_rows) >= 5:
+                r2 = [c.get_text(strip=True) for c in t0_rows[2].find_all(['td', 'th'])]
+                if len(r2) >= 3: data.update({'registration_date': r2[0], 'registration_office': r2[1], 'issuance_date': r2[2]})
+                r4 = [c.get_text(strip=True) for c in t0_rows[4].find_all(['td', 'th'])]
+                if len(r4) >= 3: data.update({'date_of_birth': r4[0], 'birth_registration_number': r4[1], 'sex': r4[2]})
+            if len(tables) > 1:
+                for tr in tables[1].find_all('tr'):
+                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th']) if td.get_text(strip=True)]
+                    if len(cells) < 4: continue
+                    lbl_bn, val_bn, _lbl_en, val_en = cells[0], cells[1], cells[2], cells[3]
+                    if 'নাম' in lbl_bn and 'মাতার' not in lbl_bn and 'পিতার' not in lbl_bn: data.update({'name_bn': val_bn, 'name_en': val_en})
+                    elif 'জন্মস্থান' in lbl_bn: data.update({'birth_place_bn': val_bn, 'birth_place_en': val_en})
+                    elif 'মাতার নাম' in lbl_bn: data.update({'mother_name_bn': val_bn, 'mother_name_en': val_en})
+                    elif 'পিতার নাম' in lbl_bn: data.update({'father_name_bn': val_bn, 'father_name_en': val_en})
+                    
+            return {'success': True, 'data': data}
+        except requests.exceptions.Timeout:
+            last_debug = 'Network timeout'
+            continue
+        except Exception as e:
+            last_debug = str(e)
+            continue
+            
+    return {'success': False, 'error': f'Tried multiple times. Last issue: {last_debug}'}
 
 def tg_api(endpoint, payload):
     if TELEGRAM_TOKEN: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=5)
@@ -194,25 +215,6 @@ def unified_handler():
         return jsonify(fetch_bdris(record_type, body.get('num', '').strip(), body.get('dob', '').strip()))
 
     return jsonify({"error": "Invalid request payload"}), 400
-
-# NEW ROUTE TO CHECK WHAT IMAGE BDRIS IS SENDING
-@app.route('/api/debug_captcha')
-def debug_captcha():
-    try:
-        session = requests.Session()
-        session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
-        resp = session.get('https://everify.bdris.gov.bd/', timeout=5)
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        captcha_img = soup.find('img', {'id': 'CaptchaImage'})['src']
-        img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
-        
-        img_headers = {'referer': 'https://everify.bdris.gov.bd/', 'user-agent': session.headers['user-agent']}
-        img_data = session.get(img_url, headers=img_headers, timeout=5).content
-        
-        b64 = base64.b64encode(img_data).decode('ascii')
-        return f'<body style="background:#222;color:#fff;text-align:center;padding:50px;"><h2>BDRIS Captcha</h2><img src="data:image/png;base64,{b64}" style="border:2px solid #fff; padding:10px; background:#fff;" /></body>'
-    except Exception as e:
-        return f'Error: {e}'
 
 @app.route('/')
 def index():
