@@ -5,7 +5,7 @@ import re
 import base64
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__, static_folder='../public', static_url_path='/')
@@ -14,8 +14,8 @@ TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4
 VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
 DEVELOPER = "@shakib2016"
 
-# Vercel Environment Variable theke key nibe, na thakle default fallback
-OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8824022881352388957').split(',')
+# Notun OCR key add kora ache
+OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8513647421792688957,K8824022881352388957').split(',')
 
 _UNICODE_MATH = str.maketrans({
     '−': '-', '–': '-', '—': '-', '×': '*', '✕': '*', '·': '*', 'x': '*', 'X': '*',
@@ -41,34 +41,57 @@ def eval_math(raw_ocr: str) -> str:
     nums = re.findall(r'\d+', norm)
     return nums[-1] if nums else ''
 
-def solve_captcha(img_bytes):
-    if not img_bytes: return '', 'No image bytes'
+def _variants(img_bytes):
     try:
         img = Image.open(io.BytesIO(img_bytes)).convert('L')
-    except Exception as e:
-        return '', f'Image open failed: {e}'
+    except Exception:
+        return []
     
-    variants = []
+    out = []
+    def emit(label, im):
+        buf = io.BytesIO()
+        im.save(buf, format='PNG')
+        out.append((label, base64.b64encode(buf.getvalue()).decode('ascii')))
+
+    # 1. Upscaled Normal
     up = img.resize((img.width * 3, img.height * 3), Image.Resampling.LANCZOS)
+    emit('normal', up)
     
-    buf = io.BytesIO(); up.save(buf, format='PNG')
-    variants.append(('normal', base64.b64encode(buf.getvalue()).decode('ascii')))
-    
+    # 2. Thresholding
     th = up.point(lambda p: 255 if p > 140 else 0)
-    buf = io.BytesIO(); th.save(buf, format='PNG')
-    variants.append(('thresh', base64.b64encode(buf.getvalue()).decode('ascii')))
+    emit('thresh', th)
+    
+    # 3. Median Filter (removes noise lines) + Threshold
+    med = up.filter(ImageFilter.MedianFilter(3))
+    med_th = med.point(lambda p: 255 if p > 140 else 0)
+    emit('med_thresh', med_th)
+    
+    # 4. Inverted Threshold
+    inv = ImageOps.invert(up)
+    inv_th = inv.point(lambda p: 255 if p > 140 else 0)
+    emit('inv_thresh', inv_th)
+
+    return out
+
+def solve_captcha(img_bytes):
+    if not img_bytes: return '', 'No image bytes'
+    
+    variants = _variants(img_bytes)
+    if not variants: return '', 'Image open failed'
 
     debug_msgs = []
     for label, b64 in variants:
         for key in OCR_KEYS:
             key = key.strip()
             if not key: continue
-            form = {'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 'OCREngine': '2', 'scale': 'true'}
+            form = {
+                'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 
+                'OCREngine': '2', 'scale': 'true', 'isOverlayRequired': 'false'
+            }
             try:
-                r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=5)
+                r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=6)
                 data = r.json()
                 
-                # Check if API threw an error (Rate limit / Invalid key)
                 if data.get('IsErroredOnProcessing'):
                     err_msg = data.get('ErrorMessage')
                     if isinstance(err_msg, list): err_msg = err_msg[0]
@@ -79,14 +102,14 @@ def solve_captcha(img_bytes):
                 if results:
                     text = results[0].get('ParsedText', '').strip()
                     ans = eval_math(text)
-                    if ans: return ans, f'Success: {text}'
-                    else: debug_msgs.append(f"OCR read '{text}' but no math")
+                    if ans: return ans, f'Success ({label}): {text}'
+                    else: debug_msgs.append(f"{label}: '{text}'")
                 else:
-                    debug_msgs.append('OCR returned empty text')
+                    debug_msgs.append(f"{label}: empty")
             except Exception as e:
                 debug_msgs.append(f'ReqErr: {e}')
                 
-    return '', f'Failed: {" | ".join(debug_msgs)}'
+    return '', f'Failed: {", ".join(debug_msgs)}'
 
 def fetch_bdris(record_type, number, dob):
     base_url = 'https://everify.bdris.gov.bd/'
