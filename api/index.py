@@ -16,91 +16,7 @@ TELEGRAM_TOKEN = '8426545218:AAFKYlHjZwUlLrgXVPyDhRr0cMreRtPWwqw'
 DEVELOPER = "@shakib2016"
 OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8513647421792688957,K8824022881352388957').split(',')
 
-# ---------- TELEGRAM BOT CORE (NO WRAPPERS, DIRECT API) ----------
-@app.route('/api/bot', methods=['POST'])
-def bot_webhook():
-    try:
-        body = request.get_json(force=True)
-    except Exception:
-        body = {}
-
-    # 1. BUTTON CLICK HANDLER
-    if 'callback_query' in body:
-        cb = body['callback_query']
-        cb_id = cb['id']
-        chat_id = cb['message']['chat']['id']
-        cb_data = cb.get('data', '')
-
-        # Answer callback (removes loading spinner)
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
-            json={"callback_query_id": cb_id}
-        )
-
-        if cb_data == 'help':
-            text = "<b>📖 How to use:</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n(17-Digit Birth number and Year-Month-Day)"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
-        
-        elif cb_data == 'dev':
-            text = "👨‍💻 <b>Developer Info:</b>\n\nName: Sakib Hasan\nTelegram: @shakib2016\nProject: BD Birth Number Ultra Verify"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
-
-        return 'ok', 200
-
-    # 2. MESSAGE HANDLER
-    if 'message' in body:
-        msg = body['message']
-        chat_id = msg['chat']['id']
-        text = msg.get('text', '').strip()
-
-        if text.startswith('/start'):
-            markup = {
-                "inline_keyboard": [
-                    [{"text": "📖 How to use", "callback_data": "help"}],
-                    [{"text": "👨‍💻 Developer", "callback_data": "dev"}]
-                ]
-            }
-            welcome = "<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n(17-Digit Birth number and Year-Month-Day)"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": markup})
-            return 'ok', 200
-
-        match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
-        if match:
-            ubrn, dob = match.groups()
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"⏳ Verifying: {ubrn}..."})
-            
-            res = fetch_bdris('birth', ubrn, dob)
-            if res.get('success'):
-                d = res['data']
-                reply = f"✅ <b>Record Found!</b>\n👤 {d.get('name_bn', '')} ({d.get('name_en', '')})\n📅 {d.get('date_of_birth', '')}\n👨‍👩‍👧 {d.get('father_name_bn', '')}\n👩‍👧 {d.get('mother_name_bn', '')}\n📍 {d.get('birth_place_bn', '')}"
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": reply, "parse_mode": "HTML"})
-            else:
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"❌ Failed: {res.get('error', 'Error')}"})
-        elif text and not text.startswith('/'):
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": "⚠️ Invalid format. Send: 19901234567890123 2008-03-08"})
-
-    return 'ok', 200
-
-
-# ---------- WEB API & SCRAPER ----------
-@app.route('/api/birth', methods=['POST'])
-@app.route('/api/index.py', methods=['POST'])
-def web_api():
-    body = request.get_json(force=True, silent=True) or {}
-    if 'num' in body and 'dob' in body:
-        return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
-    return jsonify({"error": "Invalid payload"}), 400
-
-@app.route('/api/set_webhook', methods=['GET'])
-def set_webhook():
-    res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json={"url": "https://birthid-puce.vercel.app/api/bot", "drop_pending_updates": True}).text
-    return f"<h3>Webhook Result:</h3><pre>{res}</pre>"
-
-@app.route('/', methods=['GET'])
-def index():
-    return jsonify({"status": "ok"})
-
-# ---------- SCRAPER LOGIC (Unchanged) ----------
+# ---------- SCRAPER LOGIC ----------
 _UNICODE_MATH = str.maketrans({'−': '-', '–': '-', '—': '-', '×': '*', '✕': '*', '·': '*', 'x': '*', 'X': '*', '÷': '/', '／': '/', '＋': '+', '－': '-', '＊': '*', '？': '?', '＝': '=', '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4', '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'})
 
 def eval_math(raw_ocr: str) -> str:
@@ -201,6 +117,78 @@ def fetch_bdris(record_type, number, dob):
             return {'success': True, 'data': data}
         except: continue
     return {'success': False, 'error': 'Timeout or Captcha failed'}
+
+
+# ---------- UNIFIED WEBHOOK & API HANDLER ----------
+@app.route('/api/bot', methods=['POST'])
+@app.route('/api/birth', methods=['POST'])
+@app.route('/api/index.py', methods=['POST'])
+def unified_handler():
+    # force=True ensures Vercel's weird content-types don't break JSON parsing
+    body = request.get_json(force=True, silent=True) or {}
+
+    # 1. TELEGRAM BUTTON CLICKS
+    if 'callback_query' in body:
+        cb = body['callback_query']
+        cb_id = cb['id']
+        chat_id = cb['message']['chat']['id']
+        cb_data = cb.get('data', '')
+
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={"callback_query_id": cb_id})
+
+        if cb_data == 'help':
+            text = "<b>📖 How to use:</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n(17-Digit Birth number and Year-Month-Day)"
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+        elif cb_data == 'dev':
+            text = "👨‍💻 <b>Developer Info:</b>\n\nName: Sakib Hasan\nTelegram: @shakib2016\nProject: BD Birth Number Ultra Verify"
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+
+        return 'ok', 200
+
+    # 2. TELEGRAM MESSAGES
+    if 'message' in body:
+        msg = body['message']
+        chat_id = msg['chat']['id']
+        text = msg.get('text', '').strip()
+
+        if text.startswith('/start'):
+            markup = {"inline_keyboard": [[{"text": "📖 How to use", "callback_data": "help"}], [{"text": "👨‍💻 Developer", "callback_data": "dev"}]]}
+            welcome = "<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n(17-Digit Birth number and Year-Month-Day)"
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": welcome, "parse_mode": "HTML", "reply_markup": markup})
+            return 'ok', 200
+
+        match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
+        if match:
+            ubrn, dob = match.groups()
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"⏳ Verifying: {ubrn}..."})
+            
+            res = fetch_bdris('birth', ubrn, dob)
+            if res.get('success'):
+                d = res['data']
+                reply = f"✅ <b>Record Found!</b>\n👤 {d.get('name_bn', '')} ({d.get('name_en', '')})\n📅 {d.get('date_of_birth', '')}\n👨‍👩‍👧 {d.get('father_name_bn', '')}\n👩‍👧 {d.get('mother_name_bn', '')}\n📍 {d.get('birth_place_bn', '')}"
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": reply, "parse_mode": "HTML"})
+            else:
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"❌ Failed: {res.get('error', 'Error')}"})
+        elif text and not text.startswith('/'):
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": "⚠️ Invalid format. Send: 19901234567890123 2008-03-08"})
+
+        return 'ok', 200
+
+    # 3. WEB UI FETCH REQUEST
+    if 'num' in body and 'dob' in body:
+        return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
+
+    return jsonify({"error": "Invalid payload"}), 400
+
+
+@app.route('/api/set_webhook', methods=['GET'])
+def set_webhook():
+    res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json={"url": "https://birthid-puce.vercel.app/api/bot", "drop_pending_updates": True}).text
+    return f"<h3>Webhook Result:</h3><pre>{res}</pre>"
+
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
