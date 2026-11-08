@@ -148,9 +148,9 @@ def fetch_bdris(record_type, number, dob):
 def tg_api(endpoint, payload):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}"
-        r = requests.post(url, json=payload, timeout=10)
+        r = requests.post(url, json=payload, timeout=5)
         return r.json()
-    except Exception as e:
+    except:
         return {}
 
 def tg_send(chat_id, text, markup=None):
@@ -163,37 +163,48 @@ def tg_send(chat_id, text, markup=None):
 @app.route('/api/bot', methods=['POST'])
 @app.route('/api/index', methods=['POST'])
 def unified_handler():
-    # force=True ensures JSON parsing even if Vercel drops the content-type header
-    body = request.get_json(force=True, silent=True) or {}
+    try:
+        # force=True ensures JSON parsing even if Vercel drops the content-type
+        body = request.get_json(force=True, silent=True) or {}
+    except:
+        body = {}
     
     # --- TELEGRAM BUTTONS HANDLER ---
     if 'callback_query' in body:
         cb = body['callback_query']
-        cb_id = cb['id']
-        chat_id = cb['message']['chat']['id']
-        cb_data = cb.get('data')
+        cb_id = cb.get('id')
+        cb_data = cb.get('data', '')
         
         # Answer immediately to remove the loading spinner on the button
         tg_api("answerCallbackQuery", {"callback_query_id": cb_id})
         
-        if cb_data == 'help':
-            help_text = (
-                "<b>📖 How to use this bot:</b>\n\n"
-                "Send: <code>19901234567890123 2008-03-08</code>\n"
-                "(17-Digit Birth number and Year-Month-Day)"
-            )
-            tg_send(chat_id, help_text)
-        elif cb_data == 'dev':
-            tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
-            
+        # Safely extract chat_id
+        msg = cb.get('message') or {}
+        chat = msg.get('chat') or {}
+        chat_id = chat.get('id')
+        
+        if chat_id:
+            if cb_data == 'help':
+                help_text = (
+                    "<b>📖 How to use this bot:</b>\n\n"
+                    "Send: <code>19901234567890123 2008-03-08</code>\n"
+                    "(17-Digit Birth number and Year-Month-Day)"
+                )
+                tg_send(chat_id, help_text)
+            elif cb_data == 'dev':
+                tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
+                
         return 'ok', 200
 
     # --- TELEGRAM MESSAGES HANDLER ---
     if 'message' in body:
         msg = body['message']
-        chat_id = msg['chat']['id']
+        chat = msg.get('chat') or {}
+        chat_id = chat.get('id')
         text = msg.get('text', '').strip()
         
+        if not chat_id: return 'ok', 200
+
         if text.startswith('/start'):
             markup = {
                 "inline_keyboard": [
