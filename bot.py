@@ -1,8 +1,12 @@
 # bot.py
 import os
+import sys
 import re
 import time
 import requests
+
+# Ensure root path is included
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from api.core import fetch_record, get_ocr_keys, add_ocr_key
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY')
