@@ -1,20 +1,103 @@
 # bot.py
+import io
 import os
-import sys
 import re
 import time
+import base64
 import requests
-
-# Ensure root path is included
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from api.core import fetch_record, get_ocr_keys, add_ocr_key
+from bs4 import BeautifulSoup
+from PIL import Image
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY')
 VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
-ADMIN_ID = str(os.environ.get('ADMIN_ID', '0')).strip()
 DEVELOPER = "@shakib2016"
 
 API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+OCR_KEYS = ['K8824022881352388957']
+
+_UNICODE_MATH = str.maketrans({'−': '-', '–': '-', '—': '-', '×': '*', '✕': '*', '·': '*', 'x': '*', 'X': '*', '÷': '/', '／': '/', '＋': '+', '－': '-', '＊': '*', '？': '?', '＝': '=', '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4', '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'})
+
+def eval_math(raw_ocr):
+    if not raw_ocr: return ''
+    norm = raw_ocr.translate(_UNICODE_MATH)
+    cleaned = re.sub(r'\s+', '', norm).replace('=', '').replace('?', '')
+    m = re.search(r'(\d+)([\+\-\*\/])(\d+)', cleaned)
+    if m:
+        n1, op, n2 = int(m.group(1)), m.group(2), int(m.group(3))
+        try:
+            if op == '+': return str(n1 + n2)
+            if op == '-': return str(n1 - n2)
+            if op == '*': return str(n1 * n2)
+            if op == '/': return str(n1 // n2) if n2 else ''
+        except: pass
+    m_eq = re.search(r'=\s*(-?\d+)', norm)
+    if m_eq: return m_eq.group(1).strip()
+    nums = re.findall(r'\d+', norm)
+    return nums[-1] if nums else ''
+
+def solve_captcha(img_bytes):
+    try: img = Image.open(io.BytesIO(img_bytes)).convert('L')
+    except: return ''
+    up = img.resize((img.width * 3, img.height * 3), Image.Resampling.LANCZOS)
+    th = up.point(lambda p: 255 if p > 140 else 0)
+    buf = io.BytesIO()
+    th.save(buf, format='PNG')
+    b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+    for key in OCR_KEYS:
+        form = {'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 'OCREngine': '2', 'scale': 'true'}
+        try:
+            r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=5)
+            if r.status_code == 200:
+                results = r.json().get('ParsedResults') or []
+                if results:
+                    ans = eval_math(results[0].get('ParsedText', ''))
+                    if ans: return ans
+        except: pass
+    return ''
+
+def fetch_bdris(record_type, number, dob):
+    base_url = 'https://everify.bdris.gov.bd/'
+    search_url = f'{base_url}{"UBRN" if record_type == "birth" else "UDRN"}Verification/Search'
+    if record_type == 'death': base_url = 'https://everify.bdris.gov.bd/UDRNVerification'
+    session = requests.Session()
+    session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+    for _ in range(2):
+        try:
+            resp = session.get(base_url, timeout=5)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            token = soup.find('input', {'name': '__RequestVerificationToken'})['value']
+            captcha_img = soup.find('img', {'id': 'CaptchaImage'})['src']
+            captcha_de_text = captcha_img.split('t=')[-1]
+            img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
+            img_data = session.get(img_url, timeout=5).content
+            solved = solve_captcha(img_data)
+            if not solved: continue
+            form = {'__RequestVerificationToken': token, 'UBRN': number, 'BirthDate': dob, 'CaptchaDeText': captcha_de_text, 'CaptchaInputText': solved}
+            res = session.post(search_url, data=form, timeout=8)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            tables = soup.find_all('table')
+            if not tables:
+                if 'no record' in res.text.lower(): return {'success': False, 'error': 'Record not found'}
+                continue
+            data = {}
+            t0_rows = tables[0].find_all('tr')
+            if len(t0_rows) >= 5:
+                r2 = [c.get_text(strip=True) for c in t0_rows[2].find_all(['td', 'th'])]
+                if len(r2) >= 3: data.update({'registration_date': r2[0], 'registration_office': r2[1], 'issuance_date': r2[2]})
+                r4 = [c.get_text(strip=True) for c in t0_rows[4].find_all(['td', 'th'])]
+                if len(r4) >= 3: data.update({'date_of_birth': r4[0], 'birth_registration_number': r4[1], 'sex': r4[2]})
+            if len(tables) > 1:
+                for tr in tables[1].find_all('tr'):
+                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th']) if td.get_text(strip=True)]
+                    if len(cells) < 4: continue
+                    lbl_bn, val_bn, _lbl_en, val_en = cells[0], cells[1], cells[2], cells[3]
+                    if 'নাম' in lbl_bn and 'মাতার' not in lbl_bn and 'পিতার' not in lbl_bn: data.update({'name_bn': val_bn, 'name_en': val_en})
+                    elif 'জন্মস্থান' in lbl_bn: data.update({'birth_place_bn': val_bn, 'birth_place_en': val_en})
+                    elif 'মাতার নাম' in lbl_bn: data.update({'mother_name_bn': val_bn, 'mother_name_en': val_en})
+                    elif 'পিতার নাম' in lbl_bn: data.update({'father_name_bn': val_bn, 'father_name_en': val_en})
+            return {'success': True, 'data': data}
+        except: continue
+    return {'success': False, 'error': 'Server timeout or captcha failed. Try again.'}
 
 def get_updates(offset=None):
     try:
@@ -33,7 +116,7 @@ def answer_cb(cb_id, text):
     requests.post(f"{API_URL}/answerCallbackQuery", json={"callback_query_id": cb_id, "text": text})
 
 def main():
-    print("🤖 Ultra Bot started. Waiting for messages...")
+    print("🤖 Bot started. Waiting for messages...")
     offset = None
     while True:
         updates = get_updates(offset)
@@ -44,54 +127,31 @@ def main():
             offset = update['update_id'] + 1
             if 'callback_query' in update:
                 cb = update['callback_query']
-                chat_id = cb['message']['chat']['id']
-                user_id = str(cb['from']['id'])
-                cb_id = cb['id']
-                cb_data = cb.get('data')
-                if cb_data == 'help':
-                    answer_cb(cb_id, "Help opened")
-                    send_message(chat_id, f"<b>📖 How to use:</b>\n\n1. Tap <b>Open Ultra UI</b> for the best experience.\n2. Or send your details in this format:\n<code>UBRN DOB</code>\nExample: <code>19901234567890123 2008-03-08</code>\n\n👨‍💻 <b>Developer:</b> {DEVELOPER}")
-                elif cb_data == 'admin_keys' and user_id == ADMIN_ID:
-                    keys = get_ocr_keys()
-                    masked = [k[:4] + "..." + k[-4:] for k in keys]
-                    answer_cb(cb_id, "Keys loaded")
-                    send_message(chat_id, f"<b>🔑 Active OCR Keys ({len(keys)}):</b>\n" + "\n".join([f"<code>{m}</code>" for m in masked]) + "\n\nTo add a new key, send:\n<code>/addkey YOUR_NEW_KEY</code>")
+                answer_cb(cb['id'], "Help opened" if cb.get('data') == 'help' else "Processing...")
+                if cb.get('data') == 'help':
+                    send_message(cb['message']['chat']['id'], f"<b>📖 How to use:</b>\n\nSend: <code>UBRN DOB</code>\nExample: <code>19901234567890123 2008-03-08</code>\n\n👨‍💻 <b>Dev:</b> {DEVELOPER}")
                 continue
             if 'message' not in update: continue
             msg = update['message']
             chat_id = msg['chat']['id']
-            user_id = str(msg['from']['id'])
             text = msg.get('text', '').strip()
             if text == '/start':
-                markup = {"inline_keyboard": []}
-                markup["inline_keyboard"].append([{"text": "🚀 Open Ultra UI", "web_app": {"url": VERCEL_URL}}])
-                markup["inline_keyboard"].append([{"text": "📖 How to use", "callback_data": "help"}])
-                if user_id == ADMIN_ID:
-                    markup["inline_keyboard"].append([{"text": "⚙️ Admin Panel", "callback_data": "admin_keys"}])
-                welcome = f"<b>👋 Welcome to BDRIS Verify Bot!</b>\n\nYou can check Birth & Death registrations instantly.\n\n👉 Tap <b>Open Ultra UI</b> to use our interactive app, or just send the details in this chat like this:\n\n<code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth separated by a space)</i>\n\n👨‍💻 <b>Developer:</b> {DEVELOPER}"
-                send_message(chat_id, welcome, markup)
-                continue
-            if user_id == ADMIN_ID and text.startswith('/addkey '):
-                new_key = text.split(' ', 1)[1].strip()
-                if len(new_key) > 5:
-                    keys = add_ocr_key(new_key)
-                    send_message(chat_id, f"✅ <b>Key Added Successfully!</b>\nTotal active keys: {len(keys)}")
-                else:
-                    send_message(chat_id, "❌ Invalid key format.")
+                markup = {"inline_keyboard": [[{"text": "🚀 Open Ultra UI", "web_app": {"url": VERCEL_URL}}], [{"text": "📖 How to use", "callback_data": "help"}]]}
+                send_message(chat_id, f"<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth)</i>\n\n👨‍💻 <b>Dev:</b> {DEVELOPER}", markup)
                 continue
             match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
             if match:
                 ubrn, dob = match.groups()
-                send_message(chat_id, f"⏳ <b>Verifying UBRN:</b> <code>{ubrn}</code>...\n<i>Bypassing captcha, please wait 5-10s.</i>")
-                result = fetch_record('birth', ubrn, dob)
-                if result.get('success'):
-                    d = result['data']
-                    reply = f"✅ <b>Record Found!</b>\n━━━━━━━━━━━━━━━━━━\n👤 <b>Name:</b> {d.get('name_bn', '')} ({d.get('name_en', '')})\n🆔 <b>UBRN:</b> <code>{d.get('birth_registration_number', '')}</code>\n📅 <b>DOB:</b> {d.get('date_of_birth', '')}\n👨‍👩‍👧 <b>Father:</b> {d.get('father_name_bn', '')}\n👩‍👧 <b>Mother:</b> {d.get('mother_name_bn', '')}\n📍 <b>Place:</b> {d.get('birth_place_bn', '')}\n━━━━━━━━━━━━━━━━━━\n<i>Verified via BDRIS</i>"
+                send_message(chat_id, f"⏳ <b>Verifying:</b> <code>{ubrn}</code>...")
+                res = fetch_bdris('birth', ubrn, dob)
+                if res.get('success'):
+                    d = res['data']
+                    reply = f"✅ <b>Record Found!</b>\n👤 {d.get('name_bn', '')} ({d.get('name_en', '')})\n📅 {d.get('date_of_birth', '')}\n👨‍👩‍👧 {d.get('father_name_bn', '')}\n👩‍👧 {d.get('mother_name_bn', '')}\n📍 {d.get('birth_place_bn', '')}"
                     send_message(chat_id, reply)
                 else:
-                    send_message(chat_id, f"❌ <b>Failed:</b> {result.get('error', 'Unknown error')}\n<i>Try again later or use the UI.</i>")
+                    send_message(chat_id, f"❌ <b>Failed:</b> {res.get('error', 'Error')}")
             elif text and not text.startswith('/'):
-                send_message(chat_id, "⚠️ <b>Invalid format.</b> Please send it like this:\n<code>19901234567890123 2008-03-08</code>")
+                send_message(chat_id, "⚠️ Invalid format. Send: <code>19901234567890123 2008-03-08</code>")
         time.sleep(1)
 
 if __name__ == '__main__':
