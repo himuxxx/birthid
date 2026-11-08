@@ -11,8 +11,9 @@ from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__, static_folder='../public', static_url_path='/')
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY')
-VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
+# Fallback fix if env var is empty string
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN') or '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY'
+VERCEL_URL = os.environ.get('VERCEL_URL') or 'https://birthid-puce.vercel.app'
 DEVELOPER = "@shakib2016"
 OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8513647421792688957,K8824022881352388957').split(',')
 
@@ -85,7 +86,6 @@ def fetch_bdris(record_type, number, dob):
     start_time = time.time()
     last_debug = 'Initializing'
     
-    # Retry up to 3 times, keeping within Vercel's 10s limit
     for attempt in range(3):
         if time.time() - start_time > 8.0:
             break
@@ -120,7 +120,7 @@ def fetch_bdris(record_type, number, dob):
                     return {'success': False, 'error': 'No record found for this UBRN and DOB.'}
                 elif 'captcha' in res.text.lower():
                     last_debug = f'Captcha wrong (Solved: {solved})'
-                    continue # Retry automatically
+                    continue
                 else:
                     last_debug = 'Invalid response from BDRIS.'
                     continue
@@ -153,12 +153,17 @@ def fetch_bdris(record_type, number, dob):
     return {'success': False, 'error': f'Tried multiple times. Last issue: {last_debug}'}
 
 def tg_api(endpoint, payload):
-    if TELEGRAM_TOKEN: requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=5)
+    if not TELEGRAM_TOKEN: return "No token configured"
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=5)
+        return r.text
+    except Exception as e:
+        return f"Error: {e}"
 
 def tg_send(chat_id, text, markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
     if markup: payload["reply_markup"] = markup
-    tg_api("sendMessage", payload)
+    return tg_api("sendMessage", payload)
 
 def telegram_webhook_logic(data):
     if not TELEGRAM_TOKEN: return 'No token', 200
@@ -177,8 +182,8 @@ def telegram_webhook_logic(data):
 
     if text == '/start':
         markup = {"inline_keyboard": [[{"text": "🚀 Open Ultra UI", "web_app": {"url": VERCEL_URL}}], [{"text": "📖 How to use", "callback_data": "help"}]]}
-        tg_send(chat_id, f"<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth)</i>\n\n👨‍💻 <b>Dev:</b> {DEVELOPER}", markup)
-        return 'ok', 200
+        res = tg_send(chat_id, f"<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth)</i>\n\n👨‍💻 <b>Dev:</b> {DEVELOPER}", markup)
+        return f"Telegram response: {res}", 200
 
     match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
     if match:
@@ -215,6 +220,16 @@ def unified_handler():
         return jsonify(fetch_bdris(record_type, body.get('num', '').strip(), body.get('dob', '').strip()))
 
     return jsonify({"error": "Invalid request payload"}), 400
+
+# NEW DEBUG ROUTE FOR BOT
+@app.route('/api/test_bot', methods=['GET'])
+def test_bot():
+    if not TELEGRAM_TOKEN: return "TELEGRAM_TOKEN is empty in Vercel!"
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", timeout=5)
+        return f"Vercel can reach Telegram! Response: {r.text}"
+    except Exception as e:
+        return f"Vercel CANNOT reach Telegram. Error: {e}"
 
 @app.route('/')
 def index():
