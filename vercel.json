@@ -1,8 +1,17 @@
 {
-  "rewrites": [
+  "version": 2,
+  "routes": [
     {
-      "source": "/(.*)",
-      "destination": "/api/index.py"
+      "src": "/api/birth",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/bot",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/api/set_webhook",
+      "dest": "/api/index.py"
     }
   ]
 }
