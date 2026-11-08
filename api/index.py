@@ -3,6 +3,7 @@ import io
 import os
 import re
 import time
+import json
 import base64
 import requests
 from bs4 import BeautifulSoup
@@ -163,26 +164,28 @@ def tg_send(chat_id, text, markup=None):
 @app.route('/api/bot', methods=['POST'])
 @app.route('/api/index', methods=['POST'])
 def unified_handler():
+    # RAW JSON PARSING: Ei line ta Vercel er sob jhamela fix kore dei
+    raw_body = request.get_data(as_text=True)
     try:
-        # force=True ensures JSON parsing even if Vercel drops the content-type
-        body = request.get_json(force=True, silent=True) or {}
+        body = json.loads(raw_body)
     except:
         body = {}
-    
-    # --- TELEGRAM BUTTONS HANDLER ---
+
+    # --- TELEGRAM BUTTON CLICKS (CALLBACK QUERY) ---
     if 'callback_query' in body:
         cb = body['callback_query']
         cb_id = cb.get('id')
         cb_data = cb.get('data', '')
         
-        # Answer immediately to remove the loading spinner on the button
+        # 1. Telegram ke bolo loading spinner bondho korte
         tg_api("answerCallbackQuery", {"callback_query_id": cb_id})
         
-        # Safely extract chat_id
+        # 2. Chat ID ber koro
         msg = cb.get('message') or {}
         chat = msg.get('chat') or {}
         chat_id = chat.get('id')
         
+        # 3. Message pathao
         if chat_id:
             if cb_data == 'help':
                 help_text = (
@@ -192,11 +195,17 @@ def unified_handler():
                 )
                 tg_send(chat_id, help_text)
             elif cb_data == 'dev':
-                tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
+                dev_text = (
+                    "👨‍💻 <b>Developer Info:</b>\n\n"
+                    "Name: Sakib Hasan\n"
+                    "Telegram: @shakib2016\n"
+                    "Project: BD Birth Number Ultra Verify"
+                )
+                tg_send(chat_id, dev_text)
                 
         return 'ok', 200
 
-    # --- TELEGRAM MESSAGES HANDLER ---
+    # --- TELEGRAM MESSAGES ---
     if 'message' in body:
         msg = body['message']
         chat = msg.get('chat') or {}
@@ -237,7 +246,7 @@ def unified_handler():
             tg_send(chat_id, "⚠️ Invalid format. Send: <code>19901234567890123 2008-03-08</code>")
             return 'ok', 200
 
-    # --- WEB UI FETCH HANDLER ---
+    # --- WEB UI FETCH ---
     if 'num' in body and 'dob' in body:
         return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
 
