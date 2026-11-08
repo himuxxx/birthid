@@ -10,18 +10,9 @@ from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__, static_folder='../public', static_url_path='/')
 
-# --- CORS (for local testing via Live Server) ---
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-    return response
-
 # --- ENV VARIABLES ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY')
 VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
-ADMIN_ID = str(os.environ.get('ADMIN_ID', '0')).strip()
 DEVELOPER = "@shakib2016"
 
 OCR_URL = 'https://api.ocr.space/parse/image'
@@ -52,16 +43,13 @@ def eval_math(raw_ocr: str) -> str:
     return nums[-1] if nums else ''
 
 def solve_captcha(img_bytes):
-    try:
-        img = Image.open(io.BytesIO(img_bytes)).convert('L')
-    except:
-        return ''
+    try: img = Image.open(io.BytesIO(img_bytes)).convert('L')
+    except: return ''
     up = img.resize((img.width * 3, img.height * 3), Image.Resampling.LANCZOS)
     th = up.point(lambda p: 255 if p > 140 else 0)
     buf = io.BytesIO()
     th.save(buf, format='PNG')
     b64 = base64.b64encode(buf.getvalue()).decode('ascii')
-    
     for key in OCR_KEYS:
         key = key.strip()
         if not key: continue
@@ -135,25 +123,8 @@ def tg_send(chat_id, text, markup=None):
     if markup: payload["reply_markup"] = markup
     tg_api("sendMessage", payload)
 
-# --- ROUTES ---
-@app.route('/')
-def index():
-    return send_from_directory(app.static_folder, 'index.html')
-
-@app.route('/api/birth', methods=['POST'])
-def api_birth():
-    body = request.get_json(silent=True) or {}
-    return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
-
-@app.route('/api/death', methods=['POST'])
-def api_death():
-    body = request.get_json(silent=True) or {}
-    return jsonify(fetch_bdris('death', body.get('num', '').strip(), body.get('dob', '').strip()))
-
-@app.route('/api/bot', methods=['POST'])
-def telegram_webhook():
+def telegram_webhook_logic(data):
     if not TELEGRAM_TOKEN: return 'No token', 200
-    data = request.json
     
     if 'callback_query' in data:
         cb = data['callback_query']
@@ -187,6 +158,33 @@ def telegram_webhook():
         tg_send(chat_id, "⚠️ Invalid format. Send: <code>19901234567890123 2008-03-08</code>")
 
     return 'ok', 200
+
+# --- THE UNIFIED FIX ROUTE ---
+@app.route('/api/index.py', methods=['POST', 'GET'])
+@app.route('/api/index', methods=['POST', 'GET'])
+@app.route('/api/birth', methods=['POST'])
+@app.route('/api/death', methods=['POST'])
+@app.route('/api/bot', methods=['POST'])
+def unified_handler():
+    if request.method == 'GET':
+        return jsonify({"status": "ok", "message": "Backend is running perfectly!"})
+
+    body = request.get_json(silent=True) or {}
+    
+    # 1. Bot Webhook Request
+    if 'message' in body or 'callback_query' in body:
+        return telegram_webhook_logic(body)
+        
+    # 2. Birth/Death API Request
+    if 'num' in body and 'dob' in body:
+        record_type = body.get('type', 'birth')
+        return jsonify(fetch_bdris(record_type, body.get('num', '').strip(), body.get('dob', '').strip()))
+
+    return jsonify({"error": "Invalid request payload"}), 400
+
+@app.route('/')
+def index():
+    return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
