@@ -6,13 +6,13 @@ import time
 import base64
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image
 from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__, static_folder='../public', static_url_path='/')
 
-# Fallback fix if env var is empty string
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN') or '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY'
+# NOTUN TOKEN EKHANE BOSHANO HOLO
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN') or '8426545218:AAFKYlHjZwUlLrgXVPyDhRr0cMreRtPWwqw'
 VERCEL_URL = os.environ.get('VERCEL_URL') or 'https://birthid-puce.vercel.app'
 DEVELOPER = "@shakib2016"
 OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8513647421792688957,K8824022881352388957').split(',')
@@ -57,7 +57,6 @@ def _variants(img_bytes):
 def solve_captcha(img_bytes):
     if not img_bytes: return '', 'No image'
     variants = _variants(img_bytes)
-    
     debug_msgs = []
     for label, b64 in variants:
         for engine in ('3', '2'):
@@ -89,7 +88,6 @@ def fetch_bdris(record_type, number, dob):
     for attempt in range(3):
         if time.time() - start_time > 8.0:
             break
-            
         session = requests.Session()
         session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
         
@@ -149,7 +147,6 @@ def fetch_bdris(record_type, number, dob):
         except Exception as e:
             last_debug = str(e)
             continue
-            
     return {'success': False, 'error': f'Tried multiple times. Last issue: {last_debug}'}
 
 def tg_api(endpoint, payload):
@@ -220,16 +217,6 @@ def unified_handler():
         return jsonify(fetch_bdris(record_type, body.get('num', '').strip(), body.get('dob', '').strip()))
 
     return jsonify({"error": "Invalid request payload"}), 400
-
-# NEW DEBUG ROUTE FOR BOT
-@app.route('/api/test_bot', methods=['GET'])
-def test_bot():
-    if not TELEGRAM_TOKEN: return "TELEGRAM_TOKEN is empty in Vercel!"
-    try:
-        r = requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getMe", timeout=5)
-        return f"Vercel can reach Telegram! Response: {r.text}"
-    except Exception as e:
-        return f"Vercel CANNOT reach Telegram. Error: {e}"
 
 @app.route('/')
 def index():
