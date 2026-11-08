@@ -7,7 +7,6 @@ import requests
 from bs4 import BeautifulSoup
 from PIL import Image, ImageFilter, ImageOps
 
-# Upstash Redis (for Vercel key persistence)
 try:
     from upstash_redis import Redis
     REDIS = Redis(url=os.environ.get("UPSTASH_REDIS_REST_URL"), token=os.environ.get("UPSTASH_REDIS_REST_TOKEN")) if os.environ.get("UPSTASH_REDIS_REST_URL") else None
@@ -170,5 +169,5 @@ def fetch_record(record_type, number, dob):
             if data: return {'success': True, 'data': data}
             if res and ('no record' in res.text.lower() or 'not found' in res.text.lower()):
                 return {'success': False, 'error': 'Record not found'}
-        except Exception as e: pass
+        except Exception: pass
     return {'success': False, 'error': 'Captcha solve failed or server timeout'}
