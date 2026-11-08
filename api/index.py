@@ -143,7 +143,7 @@ def catch_all(path):
         if chat_id:
             if text.startswith('/start'):
                 welcome_text = (
-                    "<b>👋 Welcome to BD Birth Number Ultra Verify!</b>\n\n"
+                    "<b>👋 Welcome to 🇧🇩 Birth Number Verify 🇧🇩</b>\n\n"
                     "📖 <b>How to use:</b>\n"
                     "Send: <code>19901234567890123 2008-03-08</code>\n"
                     "(17-Digit Birth number and Year-Month-Day)"
