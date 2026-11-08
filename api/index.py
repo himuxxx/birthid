@@ -3,6 +3,7 @@ import io
 import os
 import re
 import time
+import json
 import base64
 import requests
 from bs4 import BeautifulSoup
@@ -11,10 +12,12 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-TELEGRAM_TOKEN = '8426545218:AAFKYlHjZwUlLrgXVPyDhRr0cMreRtPWwqw'
+# Keys are loaded securely from Vercel Environment Variables (not public in GitHub)
+TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '')
+OCR_KEYS = [k.strip() for k in os.environ.get('OCR_API_KEYS', '').split(',') if k.strip()]
 DEVELOPER = "@shakib2016"
-OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8513647421792688957,K8824022881352388957').split(',')
 
+# ---------- SCRAPER ----------
 _UNICODE_MATH = str.maketrans({'−': '-', '–': '-', '—': '-', '×': '*', '✕': '*', '·': '*', 'x': '*', 'X': '*', '÷': '/', '／': '/', '＋': '+', '－': '-', '＊': '*', '？': '?', '＝': '=', '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4', '৫': '5', '৬': '6', '৭': '7', '৮': '8', '৯': '9'})
 
 def eval_math(raw_ocr: str) -> str:
@@ -49,13 +52,11 @@ def _variants(img_bytes):
     return out
 
 def solve_captcha(img_bytes):
-    if not img_bytes: return '', 'No image'
+    if not img_bytes or not OCR_KEYS: return '', 'No image or keys'
     variants = _variants(img_bytes)
     for label, b64 in variants:
         for engine in ('3', '2'):
             for key in OCR_KEYS:
-                key = key.strip()
-                if not key: continue
                 form = {'apikey': key, 'language': 'eng', 'base64Image': f'data:image/png;base64,{b64}', 'OCREngine': engine, 'scale': 'true'}
                 try:
                     r = requests.post('https://api.ocr.space/parse/image', data=form, timeout=4)
@@ -123,7 +124,6 @@ def fetch_bdris(record_type, number, dob):
 def catch_all(path):
     if request.method == 'GET':
         if 'set_webhook' in path:
-            # Pointing directly to /api/index.py
             url = "https://birthid-puce.vercel.app/api/index.py"
             res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json={"url": url, "drop_pending_updates": True}).text
             return f"<h3>Webhook Result:</h3><pre>{res}</pre>"
@@ -142,17 +142,13 @@ def catch_all(path):
 
         if chat_id:
             if text.startswith('/start'):
+                # Only How to use is here, Dev Info is moved to result footer
                 welcome_text = (
                     "<b>👋 Welcome to BD Birth Number Ultra Verify!</b>\n\n"
                     "📖 <b>How to use:</b>\n"
                     "Send: <code>19901234567890123 2008-03-08</code>\n"
-                    "(17-Digit Birth number and Year-Month-Day)\n\n"
-                    "👨‍💻 <b>Developer Info:</b>\n"
-                    "Name: Sakib Hasan\n"
-                    "Telegram: @shakib2016\n"
-                    "Project: BD Birth Number Ultra Verify"
+                    "(17-Digit Birth number and Year-Month-Day)"
                 )
-                # No reply_markup (buttons removed)
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
                     "chat_id": chat_id, 
                     "text": welcome_text, 
@@ -163,11 +159,25 @@ def catch_all(path):
             match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
             if match:
                 ubrn, dob = match.groups()
-                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"⏳ Verifying: {ubrn}..."})
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"⏳ Verifying: <code>{ubrn}</code>...", "parse_mode": "HTML"})
                 res = fetch_bdris('birth', ubrn, dob)
+                
                 if res.get('success'):
                     d = res['data']
-                    reply = f"✅ <b>Record Found!</b>\n👤 {d.get('name_bn', '')} ({d.get('name_en', '')})\n📅 {d.get('date_of_birth', '')}\n👨‍👩‍👧 {d.get('father_name_bn', '')}\n👩‍👧 {d.get('mother_name_bn', '')}\n📍 {d.get('birth_place_bn', '')}"
+                    # Premium UI layout for the result
+                    reply = (
+                        f"✅ <b>Record Found!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"👤 <b>নাম:</b> {d.get('name_bn', '')} ({d.get('name_en', '')})\n"
+                        f"⚧ <b>লিঙ্গ:</b> {d.get('sex', '')}\n"
+                        f"📅 <b>জন্ম তারিখ:</b> {d.get('date_of_birth', '')}\n"
+                        f"🆔 <b>ইউবিআরএন:</b> <code>{d.get('birth_registration_number', '')}</code>\n"
+                        f"👨‍👩‍👧 <b>পিতা:</b> {d.get('father_name_bn', '')}\n"
+                        f"👩‍👧 <b>মাতা:</b> {d.get('mother_name_bn', '')}\n"
+                        f"📍 <b>জন্মস্থান:</b> {d.get('birth_place_bn', '')}\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"👨‍💻 <b>Dev:</b> {DEVELOPER}"
+                    )
                     requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": reply, "parse_mode": "HTML"})
                 else:
                     requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"❌ Failed: {res.get('error', 'Error')}"})
