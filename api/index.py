@@ -119,33 +119,47 @@ def fetch_bdris(record_type, number, dob):
     return {'success': False, 'error': 'Timeout or Captcha failed'}
 
 
-# ---------- UNIFIED WEBHOOK & API HANDLER ----------
-@app.route('/api/bot', methods=['POST'])
-@app.route('/api/birth', methods=['POST'])
-@app.route('/api/index.py', methods=['POST'])
-def unified_handler():
-    # force=True ensures Vercel's weird content-types don't break JSON parsing
-    body = request.get_json(force=True, silent=True) or {}
+# ---------- UNIVERSAL CATCH-ALL ROUTE ----------
+@app.route('/', defaults={'path': ''}, methods=['GET', 'POST'])
+@app.route('/<path:path>', methods=['GET', 'POST'])
+def catch_all(path):
+    # 1. HANDLE GET (Webhook Setup)
+    if request.method == 'GET':
+        if 'set_webhook' in path:
+            res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json={"url": "https://birthid-puce.vercel.app/api/bot", "drop_pending_updates": True}).text
+            return f"<h3>Webhook Result:</h3><pre>{res}</pre>"
+        return jsonify({"status": "ok"})
 
-    # 1. TELEGRAM BUTTON CLICKS
+    # 2. HANDLE POST (Telegram & Web UI)
+    body = {}
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+    except: pass
+    
+    if not body:
+        try:
+            raw = request.get_data(as_text=True)
+            body = json.loads(raw)
+        except: pass
+
+    # TELEGRAM BUTTON CLICKS
     if 'callback_query' in body:
         cb = body['callback_query']
         cb_id = cb['id']
         chat_id = cb['message']['chat']['id']
         cb_data = cb.get('data', '')
-
+        
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={"callback_query_id": cb_id})
-
+        
         if cb_data == 'help':
             text = "<b>📖 How to use:</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n(17-Digit Birth number and Year-Month-Day)"
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
         elif cb_data == 'dev':
             text = "👨‍💻 <b>Developer Info:</b>\n\nName: Sakib Hasan\nTelegram: @shakib2016\nProject: BD Birth Number Ultra Verify"
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
-
         return 'ok', 200
 
-    # 2. TELEGRAM MESSAGES
+    # TELEGRAM MESSAGES
     if 'message' in body:
         msg = body['message']
         chat_id = msg['chat']['id']
@@ -161,7 +175,6 @@ def unified_handler():
         if match:
             ubrn, dob = match.groups()
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"⏳ Verifying: {ubrn}..."})
-            
             res = fetch_bdris('birth', ubrn, dob)
             if res.get('success'):
                 d = res['data']
@@ -171,24 +184,13 @@ def unified_handler():
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"❌ Failed: {res.get('error', 'Error')}"})
         elif text and not text.startswith('/'):
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": "⚠️ Invalid format. Send: 19901234567890123 2008-03-08"})
-
         return 'ok', 200
 
-    # 3. WEB UI FETCH REQUEST
+    # WEB UI FETCH REQUEST
     if 'num' in body and 'dob' in body:
         return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
 
     return jsonify({"error": "Invalid payload"}), 400
-
-
-@app.route('/api/set_webhook', methods=['GET'])
-def set_webhook():
-    res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json={"url": "https://birthid-puce.vercel.app/api/bot", "drop_pending_updates": True}).text
-    return f"<h3>Webhook Result:</h3><pre>{res}</pre>"
-
-@app.route('/', methods=['GET'])
-def index():
-    return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
