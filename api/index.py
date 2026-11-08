@@ -7,11 +7,10 @@ import base64
 import requests
 from bs4 import BeautifulSoup
 from PIL import Image
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 
-app = Flask(__name__, static_folder='../public', static_url_path='/')
+app = Flask(__name__)
 
-# NOTUN TOKEN EKHANE BOSHANO HOLO
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN') or '8426545218:AAFKYlHjZwUlLrgXVPyDhRr0cMreRtPWwqw'
 VERCEL_URL = os.environ.get('VERCEL_URL') or 'https://birthid-puce.vercel.app'
 DEVELOPER = "@shakib2016"
@@ -57,6 +56,7 @@ def _variants(img_bytes):
 def solve_captcha(img_bytes):
     if not img_bytes: return '', 'No image'
     variants = _variants(img_bytes)
+    
     debug_msgs = []
     for label, b64 in variants:
         for engine in ('3', '2'):
@@ -198,29 +198,21 @@ def telegram_webhook_logic(data):
 
     return 'ok', 200
 
+# Ei route ta Vercel rewrite er karone ashe
 @app.route('/api/index.py', methods=['POST', 'GET'])
-@app.route('/api/index', methods=['POST', 'GET'])
 @app.route('/api/birth', methods=['POST'])
-@app.route('/api/death', methods=['POST'])
 @app.route('/api/bot', methods=['POST'])
-def unified_handler():
+@app.route('/', methods=['GET'])
+def catch_all():
     if request.method == 'GET':
-        return jsonify({"status": "ok", "message": "Backend is running perfectly!"})
-
+        return jsonify({"status": "ok", "message": "Backend running."})
+        
     body = request.get_json(silent=True) or {}
     
     if 'message' in body or 'callback_query' in body:
         return telegram_webhook_logic(body)
         
     if 'num' in body and 'dob' in body:
-        record_type = body.get('type', 'birth')
-        return jsonify(fetch_bdris(record_type, body.get('num', '').strip(), body.get('dob', '').strip()))
+        return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
 
     return jsonify({"error": "Invalid request payload"}), 400
-
-@app.route('/')
-def index():
-    return send_from_directory(app.static_folder, 'index.html')
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
