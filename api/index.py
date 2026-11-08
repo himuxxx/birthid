@@ -147,9 +147,11 @@ def fetch_bdris(record_type, number, dob):
 
 def tg_api(endpoint, payload):
     try:
-        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=8)
+        r = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=10)
+        print(f"[TG API] {endpoint}: {r.text}", flush=True)
         return r.text
     except Exception as e:
+        print(f"[TG API ERROR] {e}", flush=True)
         return f"Error: {e}"
 
 def tg_send(chat_id, text, markup=None):
@@ -158,55 +160,49 @@ def tg_send(chat_id, text, markup=None):
     return tg_api("sendMessage", payload)
 
 def telegram_webhook_logic(data):
-    # --- CALLBACK QUERY HANDLER (BUTTON CLICKS) ---
+    print(f"[BOT LOG] Received Update: {data}", flush=True)
+    
+    # --- CALLBACK QUERY (BUTTON CLICKS) ---
     if 'callback_query' in data:
         cb = data['callback_query']
-        cb_id = cb['id']
-        chat_id = cb['message']['chat']['id']
+        cb_id = cb.get('id')
+        msg = cb.get('message', {})
+        chat_id = msg.get('chat', {}).get('id')
         cb_data = cb.get('data', '')
         
-        # Answer the callback to stop the loading spinner on the button
+        # Answer immediately to stop loading spinner
         tg_api("answerCallbackQuery", {"callback_query_id": cb_id})
         
-        if cb_data == 'help':
-            help_text = (
-                "<b>📖 How to use this bot:</b>\n\n"
-                "1️⃣ Get the 17-digit Birth Registration Number (UBRN).\n"
-                "2️⃣ Get the Date of Birth (Year-Month-Day).\n"
-                "3️⃣ Send them in this chat separated by a space.\n\n"
-                "<b>Example:</b>\n"
-                "<code>19901234567890123 2008-03-08</code>\n\n"
-                "The bot will automatically solve the captcha and fetch the information for you!"
-            )
-            tg_send(chat_id, help_text)
-            
-        elif cb_data == 'dev':
-            tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
-            
+        if chat_id:
+            if cb_data == 'help':
+                help_text = (
+                    "<b>📖 How to use this bot:</b>\n\n"
+                    "Send: <code>19901234567890123 2008-03-08</code>\n"
+                    "(17-Digit Birth number and Year-Month-Day)"
+                )
+                tg_send(chat_id, help_text)
+            elif cb_data == 'dev':
+                tg_send(chat_id, f"👨‍💻 <b>Developer:</b> {DEVELOPER}")
         return 'ok', 200
 
-    # --- MESSAGE HANDLER ---
+    # --- MESSAGES ---
     if 'message' not in data: return 'ok', 200
     msg = data['message']
-    chat_id = msg['chat']['id']
+    chat_id = msg.get('chat', {}).get('id')
     text = msg.get('text', '').strip()
 
     if text.startswith('/start'):
-        # Beautiful UI layout
         markup = {
             "inline_keyboard": [
                 [{"text": "📖 How to use", "callback_data": "help"}],
                 [{"text": "👨‍💻 Developer", "callback_data": "dev"}]
             ]
         }
-        
-        # Exact format requested by user
         welcome_text = (
             "<b>👋 Welcome to BDRIS Verify!</b>\n\n"
             "Send: <code>19901234567890123 2008-03-08</code>\n"
-            "<i>(17-Digit Birth number and Year-Month-Day)</i>"
+            "(17-Digit Birth number and Year-Month-Day)"
         )
-        
         tg_send(chat_id, welcome_text, markup)
         return 'ok', 200
 
@@ -231,7 +227,13 @@ def telegram_webhook_logic(data):
 @app.route('/api/bot', methods=['POST'])
 @app.route('/api/index', methods=['POST'])
 def unified_handler():
-    body = request.get_json(silent=True) or {}
+    try:
+        # force=True ekhane boddo important, karon Vercel majhe majhe content-type drop kore dey
+        body = request.get_json(force=True, silent=True) or {}
+    except:
+        body = {}
+    
+    print(f"[WEBHOOK RECEIVED] {body}", flush=True)
     
     if 'message' in body or 'callback_query' in body:
         return telegram_webhook_logic(body)
