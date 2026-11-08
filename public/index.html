@@ -8,61 +8,24 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&family=Hind+Siliguri:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Plus Jakarta Sans', 'Hind Siliguri', sans-serif;
-            background-color: #050505;
-            color: #fff;
-            overflow-x: hidden;
-            min-height: 100vh;
-        }
-        .mesh-bg {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1;
-            background: radial-gradient(circle at 15% 50%, rgba(16, 185, 129, 0.15), transparent 40%),
-                        radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.15), transparent 40%);
-            animation: pulse-bg 10s infinite alternate;
-        }
+        body { font-family: 'Plus Jakarta Sans', 'Hind Siliguri', sans-serif; background-color: #050505; color: #fff; overflow-x: hidden; min-height: 100vh; }
+        .mesh-bg { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; background: radial-gradient(circle at 15% 50%, rgba(16, 185, 129, 0.15), transparent 40%), radial-gradient(circle at 85% 30%, rgba(59, 130, 246, 0.15), transparent 40%); animation: pulse-bg 10s infinite alternate; }
         @keyframes pulse-bg { 0% { opacity: 0.6; } 100% { opacity: 1; } }
-        .glass {
-            background: rgba(255, 255, 255, 0.03);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 30px 60px -15px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.1);
-        }
-        .input-group input {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            transition: all 0.3s ease;
-        }
-        .input-group input:focus {
-            background: rgba(255, 255, 255, 0.05);
-            border-color: #10b981;
-            box-shadow: 0 0 20px rgba(16, 185, 129, 0.2);
-            outline: none;
-        }
-        .glow-btn {
-            background: linear-gradient(135deg, #10b981, #059669);
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4);
-        }
+        .glass { background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 30px 60px -15px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.1); }
+        .input-group input { background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.1); transition: all 0.3s ease; }
+        .input-group input:focus { background: rgba(255, 255, 255, 0.05); border-color: #10b981; box-shadow: 0 0 20px rgba(16, 185, 129, 0.2); outline: none; }
+        .glow-btn { background: linear-gradient(135deg, #10b981, #059669); transition: all 0.3s ease; box-shadow: 0 4px 20px rgba(16, 185, 129, 0.4); }
         .glow-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(16, 185, 129, 0.6); }
         .glow-btn:active { transform: translateY(1px); }
         .glow-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         .result-card { animation: slideUp 0.4s ease-out forwards; }
-        .spinner {
-            border: 3px solid rgba(255,255,255,0.1);
-            border-left-color: #10b981;
-            border-radius: 50%;
-            width: 20px; height: 20px;
-            animation: spin 1s linear infinite;
-        }
+        .spinner { border: 3px solid rgba(255,255,255,0.1); border-left-color: #10b981; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="flex items-center justify-center p-4 md:p-8">
     <div class="mesh-bg"></div>
-
     <div class="glass w-full max-w-2xl rounded-[32px] p-6 md:p-10 relative overflow-hidden">
         <div class="text-center mb-8">
             <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 mb-4 shadow-lg shadow-emerald-500/30">
@@ -71,12 +34,10 @@
             <h1 class="text-3xl font-bold tracking-tight text-white mb-2">BDRIS <span class="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-400">Ultra</span></h1>
             <p class="text-gray-400 text-sm">Instant Birth & Death Registration Verification</p>
         </div>
-
         <div class="flex bg-black/40 rounded-2xl p-1 mb-6 border border-white/5">
             <button onclick="switchTab('birth')" id="tab-birth" class="flex-1 py-3 text-sm font-semibold rounded-xl bg-emerald-500/20 text-emerald-400 transition-all">জন্ম নিবন্ধন</button>
             <button onclick="switchTab('death')" id="tab-death" class="flex-1 py-3 text-sm font-semibold rounded-xl text-gray-400 hover:text-white transition-all">মৃত্যু নিবন্ধন</button>
         </div>
-
         <div class="space-y-5" id="form-area">
             <div class="input-group">
                 <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 ml-1" id="label-num">জন্ম নিবন্ধন নম্বর (UBRN)</label>
@@ -91,7 +52,6 @@
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
             </button>
         </div>
-
         <div id="result-area" class="mt-8 hidden">
             <div id="error-msg" class="hidden p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium text-center"></div>
             <div id="data-card" class="hidden result-card bg-black/30 border border-white/10 rounded-2xl p-5">
@@ -107,28 +67,20 @@
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="result-grid"></div>
             </div>
         </div>
-
         <div class="text-center mt-10 text-xs text-gray-500 font-medium">
             Powered by everify.bdris.gov.bd <br>
-            <span class="text-gray-400 mt-1 inline-block">Developed by <span class="text-emerald-400">@shakib2016</span></span>
+            <span class="text-gray-400 mt-1 inline-block">Developed by <span class="text-emerald-400 font-bold">@shakib2016</span></span>
         </div>
     </div>
-
     <script>
-        if (window.Telegram && Telegram.WebApp) {
-            Telegram.WebApp.ready();
-            Telegram.WebApp.expand();
-        }
-
+        if (window.Telegram && Telegram.WebApp) { Telegram.WebApp.ready(); Telegram.WebApp.expand(); }
         let currentType = 'birth';
         const API_BASE = window.location.origin;
-
         function switchTab(type) {
             currentType = type;
             const btnB = document.getElementById('tab-birth');
             const btnD = document.getElementById('tab-death');
             const lblN = document.getElementById('label-num');
-            
             if(type === 'birth') {
                 btnB.className = "flex-1 py-3 text-sm font-semibold rounded-xl bg-emerald-500/20 text-emerald-400 transition-all";
                 btnD.className = "flex-1 py-3 text-sm font-semibold rounded-xl text-gray-400 hover:text-white transition-all";
@@ -140,82 +92,53 @@
             }
             document.getElementById('result-area').classList.add('hidden');
         }
-
         async function verify() {
             const num = document.getElementById('input-num').value.trim();
             const dob = document.getElementById('input-dob').value.trim();
             if(!num || !dob) return showError("Please fill in all fields.");
-
             const btn = document.getElementById('btn-verify');
             const originalHtml = btn.innerHTML;
             btn.disabled = true;
             btn.innerHTML = '<div class="spinner"></div><span>Verifying...</span>';
-            
             document.getElementById('result-area').classList.add('hidden');
-            
             try {
                 const res = await fetch(`${API_BASE}/api/${currentType}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ num, dob })
                 });
                 const json = await res.json();
-                
-                if(json.success && json.data) {
-                    showData(json.data);
-                } else {
-                    showError(json.error || "Record not found or invalid details.");
-                }
-            } catch(err) {
-                showError("Server connection failed.");
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHtml;
-            }
+                if(json.success && json.data) showData(json.data);
+                else showError(json.error || "Record not found or invalid details.");
+            } catch(err) { showError("Server connection failed."); } 
+            finally { btn.disabled = false; btn.innerHTML = originalHtml; }
         }
-
         function showError(msg) {
             document.getElementById('result-area').classList.remove('hidden');
             document.getElementById('data-card').classList.add('hidden');
             const err = document.getElementById('error-msg');
-            err.innerText = msg;
-            err.classList.remove('hidden');
+            err.innerText = msg; err.classList.remove('hidden');
         }
-
         function showData(d) {
             document.getElementById('result-area').classList.remove('hidden');
             document.getElementById('error-msg').classList.add('hidden');
-            
             const grid = document.getElementById('result-grid');
             grid.innerHTML = '';
-            
             const fields = [
-                { k: 'Name (BN)', v: d.name_bn },
-                { k: 'Name (EN)', v: d.name_en },
-                { k: 'Date of Birth', v: d.date_of_birth },
-                { k: 'UBRN', v: d.birth_registration_number },
-                { k: 'Father Name', v: d.father_name_bn },
-                { k: 'Mother Name', v: d.mother_name_bn },
-                { k: 'Birth Place', v: d.birth_place_bn },
-                { k: 'Sex', v: d.sex },
+                { k: 'Name (BN)', v: d.name_bn }, { k: 'Name (EN)', v: d.name_en },
+                { k: 'Date of Birth', v: d.date_of_birth }, { k: 'UBRN', v: d.birth_registration_number },
+                { k: 'Father Name', v: d.father_name_bn }, { k: 'Mother Name', v: d.mother_name_bn },
+                { k: 'Birth Place', v: d.birth_place_bn }, { k: 'Sex', v: d.sex },
             ];
-
             fields.forEach(f => {
-                if(f.v) {
-                    grid.innerHTML += `
-                        <div class="bg-white/5 p-3 rounded-xl border border-white/5">
-                            <div class="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-1">${f.k}</div>
-                            <div class="text-sm font-medium text-gray-100">${f.v}</div>
-                        </div>
-                    `;
-                }
+                if(f.v) grid.innerHTML += `
+                    <div class="bg-white/5 p-3 rounded-xl border border-white/5">
+                        <div class="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-1">${f.k}</div>
+                        <div class="text-sm font-medium text-gray-100">${f.v}</div>
+                    </div>`;
             });
-            
             const card = document.getElementById('data-card');
-            card.classList.remove('hidden');
-            card.classList.add('result-card');
-            void card.offsetWidth;
-            card.classList.add('result-card');
+            card.classList.remove('hidden'); card.classList.add('result-card');
+            void card.offsetWidth; card.classList.add('result-card');
         }
     </script>
 </body>
