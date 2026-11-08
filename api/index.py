@@ -123,47 +123,53 @@ def fetch_bdris(record_type, number, dob):
 @app.route('/', defaults={'path': ''}, methods=['GET', 'POST'])
 @app.route('/<path:path>', methods=['GET', 'POST'])
 def catch_all(path):
-    # 1. HANDLE GET (Webhook Setup)
+    # 1. HANDLE GET (Webhook Setup & UI)
     if request.method == 'GET':
         if 'set_webhook' in path:
             res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json={"url": "https://birthid-puce.vercel.app/api/bot", "drop_pending_updates": True}).text
             return f"<h3>Webhook Result:</h3><pre>{res}</pre>"
         return jsonify({"status": "ok"})
 
-    # 2. HANDLE POST (Telegram & Web UI)
+    # 2. MANUAL JSON PARSING (Bulletproof against Vercel dropouts)
+    raw_data = request.get_data(as_text=True)
+    print(f"[WEBHOOK RECEIVED BODY] {raw_data}", flush=True)
+    
     body = {}
     try:
+        body = json.loads(raw_data)
+    except:
         body = request.get_json(force=True, silent=True) or {}
-    except: pass
-    
-    if not body:
-        try:
-            raw = request.get_data(as_text=True)
-            body = json.loads(raw)
-        except: pass
 
-    # TELEGRAM BUTTON CLICKS
+    # 3. TELEGRAM BUTTON CLICKS (Callback Query)
     if 'callback_query' in body:
+        print("[BOT LOG] Button Clicked!", flush=True)
         cb = body['callback_query']
-        cb_id = cb['id']
-        chat_id = cb['message']['chat']['id']
+        cb_id = cb.get('id')
+        msg = cb.get('message') or {}
+        chat = msg.get('chat') or {}
+        chat_id = chat.get('id')
         cb_data = cb.get('data', '')
+
+        if cb_id:
+            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={"callback_query_id": cb_id})
         
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery", json={"callback_query_id": cb_id})
-        
-        if cb_data == 'help':
-            text = "<b>📖 How to use:</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n(17-Digit Birth number and Year-Month-Day)"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
-        elif cb_data == 'dev':
-            text = "👨‍💻 <b>Developer Info:</b>\n\nName: Sakib Hasan\nTelegram: @shakib2016\nProject: BD Birth Number Ultra Verify"
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+        if chat_id:
+            if cb_data == 'help':
+                text = "<b>📖 How to use:</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n(17-Digit Birth number and Year-Month-Day)"
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
+            elif cb_data == 'dev':
+                text = "👨‍💻 <b>Developer Info:</b>\n\nName: Sakib Hasan\nTelegram: @shakib2016\nProject: BD Birth Number Ultra Verify"
+                requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"})
         return 'ok', 200
 
-    # TELEGRAM MESSAGES
+    # 4. TELEGRAM MESSAGES
     if 'message' in body:
         msg = body['message']
-        chat_id = msg['chat']['id']
+        chat = msg.get('chat') or {}
+        chat_id = chat.get('id')
         text = msg.get('text', '').strip()
+
+        if not chat_id: return 'ok', 200
 
         if text.startswith('/start'):
             markup = {"inline_keyboard": [[{"text": "📖 How to use", "callback_data": "help"}], [{"text": "👨‍💻 Developer", "callback_data": "dev"}]]}
@@ -186,7 +192,7 @@ def catch_all(path):
             requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": "⚠️ Invalid format. Send: 19901234567890123 2008-03-08"})
         return 'ok', 200
 
-    # WEB UI FETCH REQUEST
+    # 5. WEB UI FETCH
     if 'num' in body and 'dob' in body:
         return jsonify(fetch_bdris('birth', body.get('num', '').strip(), body.get('dob', '').strip()))
 
