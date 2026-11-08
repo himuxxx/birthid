@@ -15,6 +15,7 @@ app = Flask(__name__)
 # Keys are loaded securely from Vercel Environment Variables (not public in GitHub)
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '')
 OCR_KEYS = [k.strip() for k in os.environ.get('OCR_API_KEYS', '').split(',') if k.strip()]
+PRIVATE_CHANNEL_ID = os.environ.get('PRIVATE_CHANNEL_ID', '') # Log channel ID
 DEVELOPER = "@shakib2016"
 
 # ---------- SCRAPER ----------
@@ -158,12 +159,35 @@ def catch_all(path):
             match = re.search(r'\b(\d{17})\s+(\d{4}-\d{2}-\d{2})\b', text)
             if match:
                 ubrn, dob = match.groups()
+                
+                # --- NEW: Log to Private Channel ---
+                if PRIVATE_CHANNEL_ID:
+                    user_info = msg.get('from', {})
+                    user_id = user_info.get('id', 'Unknown')
+                    first_name = user_info.get('first_name', '')
+                    last_name = user_info.get('last_name', '')
+                    username = f"@{user_info.get('username')}" if user_info.get('username') else "No Username"
+                    
+                    log_text = (
+                        f"🔍 <b>New Search Alert!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━\n"
+                        f"👤 <b>Name:</b> {first_name} {last_name}\n"
+                        f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
+                        f"🔗 <b>Username:</b> {username}\n"
+                        f"📝 <b>Query:</b> <code>{ubrn} {dob}</code>"
+                    )
+                    requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={
+                        "chat_id": PRIVATE_CHANNEL_ID,
+                        "text": log_text,
+                        "parse_mode": "HTML"
+                    })
+                # -----------------------------------
+
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", json={"chat_id": chat_id, "text": f"⏳ Verifying: <code>{ubrn}</code>...", "parse_mode": "HTML"})
                 res = fetch_bdris('birth', ubrn, dob)
                 
                 if res.get('success'):
                     d = res['data']
-                    # Changed "Record Found!" to Bengali and kept the premium layout
                     reply = (
                         f"✅ <b>তথ্য সফলভাবে পাওয়া গেছে!</b>\n"
                         f"━━━━━━━━━━━━━━━━━━\n"
