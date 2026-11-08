@@ -5,10 +5,18 @@ import re
 import base64
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageFilter, ImageOps
-from flask import Flask, request, jsonify
+from PIL import Image
+from flask import Flask, request, jsonify, send_from_directory
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='../public', static_url_path='/')
+
+# --- CORS (for local testing via Live Server) ---
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    return response
 
 # --- ENV VARIABLES ---
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN', '8426186448:AAFx1NO1zhNERio8x4fn6v94bBOLaWXh4eY')
@@ -16,9 +24,7 @@ VERCEL_URL = os.environ.get('VERCEL_URL', 'https://birthid-puce.vercel.app')
 ADMIN_ID = str(os.environ.get('ADMIN_ID', '0')).strip()
 DEVELOPER = "@shakib2016"
 
-# --- OCR & SCRAPER LOGIC ---
 OCR_URL = 'https://api.ocr.space/parse/image'
-# Default key as fallback
 OCR_KEYS = os.environ.get('OCR_API_KEYS', 'K8824022881352388957').split(',')
 
 _UNICODE_MATH = str.maketrans({
@@ -50,11 +56,8 @@ def solve_captcha(img_bytes):
         img = Image.open(io.BytesIO(img_bytes)).convert('L')
     except:
         return ''
-    
-    # Fast variant: thresholding
     up = img.resize((img.width * 3, img.height * 3), Image.Resampling.LANCZOS)
     th = up.point(lambda p: 255 if p > 140 else 0)
-    
     buf = io.BytesIO()
     th.save(buf, format='PNG')
     b64 = base64.b64encode(buf.getvalue()).decode('ascii')
@@ -66,11 +69,9 @@ def solve_captcha(img_bytes):
         try:
             r = requests.post(OCR_URL, data=form, timeout=5)
             if r.status_code == 200:
-                data = r.json()
-                results = data.get('ParsedResults') or []
+                results = r.json().get('ParsedResults') or []
                 if results:
-                    text = results[0].get('ParsedText', '')
-                    ans = eval_math(text)
+                    ans = eval_math(results[0].get('ParsedText', ''))
                     if ans: return ans
         except: pass
     return ''
@@ -83,9 +84,8 @@ def fetch_bdris(record_type, number, dob):
     session = requests.Session()
     session.headers.update({'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
     
-    for _ in range(2): # Fast retry (max 2 attempts to avoid Vercel timeout)
+    for _ in range(2):
         try:
-            # 1. Init Session
             resp = session.get(base_url, timeout=5)
             soup = BeautifulSoup(resp.text, 'html.parser')
             token = soup.find('input', {'name': '__RequestVerificationToken'})['value']
@@ -93,16 +93,13 @@ def fetch_bdris(record_type, number, dob):
             captcha_de_text = captcha_img.split('t=')[-1]
             img_url = f"https://everify.bdris.gov.bd{captcha_img}" if captcha_img.startswith('/') else captcha_img
             
-            # 2. Download & Solve Captcha
             img_data = session.get(img_url, timeout=5).content
             solved = solve_captcha(img_data)
             if not solved: continue
             
-            # 3. Search Record
             form = {'__RequestVerificationToken': token, 'UBRN': number, 'BirthDate': dob, 'CaptchaDeText': captcha_de_text, 'CaptchaInputText': solved}
             res = session.post(search_url, data=form, timeout=8)
             
-            # 4. Parse
             soup = BeautifulSoup(res.text, 'html.parser')
             tables = soup.find_all('table')
             if not tables:
@@ -126,11 +123,9 @@ def fetch_bdris(record_type, number, dob):
                     elif 'মাতার নাম' in lbl_bn: data.update({'mother_name_bn': val_bn, 'mother_name_en': val_en})
                     elif 'পিতার নাম' in lbl_bn: data.update({'father_name_bn': val_bn, 'father_name_en': val_en})
             return {'success': True, 'data': data}
-        except Exception as e:
-            continue
+        except: continue
     return {'success': False, 'error': 'Server timeout or captcha failed. Try again.'}
 
-# --- TELEGRAM HELPERS ---
 def tg_api(endpoint, payload):
     if not TELEGRAM_TOKEN: return
     requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{endpoint}", json=payload, timeout=5)
@@ -141,9 +136,9 @@ def tg_send(chat_id, text, markup=None):
     tg_api("sendMessage", payload)
 
 # --- ROUTES ---
-@app.route('/api/health', methods=['GET'])
-def health():
-    return jsonify({"status": "ok", "message": "Backend is running perfectly!"})
+@app.route('/')
+def index():
+    return send_from_directory(app.static_folder, 'index.html')
 
 @app.route('/api/birth', methods=['POST'])
 def api_birth():
@@ -173,10 +168,7 @@ def telegram_webhook():
     text = msg.get('text', '').strip()
 
     if text == '/start':
-        markup = {"inline_keyboard": [
-            [{"text": "🚀 Open Ultra UI", "web_app": {"url": VERCEL_URL}}],
-            [{"text": "📖 How to use", "callback_data": "help"}]
-        ]}
+        markup = {"inline_keyboard": [[{"text": "🚀 Open Ultra UI", "web_app": {"url": VERCEL_URL}}], [{"text": "📖 How to use", "callback_data": "help"}]]}
         tg_send(chat_id, f"<b>👋 Welcome to BDRIS Verify!</b>\n\nSend: <code>19901234567890123 2008-03-08</code>\n<i>(17-digit UBRN and Date of Birth)</i>\n\n👨‍💻 <b>Dev:</b> {DEVELOPER}", markup)
         return 'ok', 200
 
@@ -195,3 +187,6 @@ def telegram_webhook():
         tg_send(chat_id, "⚠️ Invalid format. Send: <code>19901234567890123 2008-03-08</code>")
 
     return 'ok', 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
